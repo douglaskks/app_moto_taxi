@@ -1,34 +1,17 @@
-// lib/core/services/admin/admin_service.dart
-import 'package:firebase_database/firebase_database.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../models/admin/dashboard_stats.dart';
 import '../../../models/admin/user_management.dart';
 import '../../../models/admin/financial_report.dart';
 import '../../../models/admin/ride_management.dart';
 
 class AdminService {
-  final FirebaseDatabase _database = FirebaseDatabase.instance;
-  
-  // Referências
-  late DatabaseReference _dashboardRef;
-  late DatabaseReference _usersRef;
-  late DatabaseReference _financialRef;
-  late DatabaseReference _ridesRef;
-  late DatabaseReference _settingsRef;
-  
-  AdminService() {
-    _dashboardRef = _database.ref().child('admin/dashboard');
-    _usersRef = _database.ref().child('users');
-    _financialRef = _database.ref().child('financial');
-    _ridesRef = _database.ref().child('rides');
-    _settingsRef = _database.ref().child('admin/settings');
-  }
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   
   // Métodos de Dashboard
-  
   Future<DashboardStats> getDashboardStats() async {
     try {
-      final snapshot = await _dashboardRef.once();
-      if (snapshot.snapshot.value == null) {
+      final snapshot = await _firestore.collection('admin').doc('dashboard').get();
+      if (!snapshot.exists) {
         return DashboardStats(
           activeUsers: 0,
           onlineDrivers: 0,
@@ -39,7 +22,7 @@ class AdminService {
         );
       }
       
-      Map<String, dynamic> data = Map<String, dynamic>.from(snapshot.snapshot.value as Map);
+      Map<String, dynamic> data = snapshot.data()!;
       return DashboardStats.fromJson(data);
     } catch (e) {
       throw Exception('Failed to load dashboard stats: $e');
@@ -47,7 +30,6 @@ class AdminService {
   }
   
   // Métodos de Usuários
-  
   Future<List<UserDetails>> getUsers({
     String? role,
     String? status,
@@ -56,36 +38,33 @@ class AdminService {
     String? lastUserId,
   }) async {
     try {
-      Query query = _usersRef;
+      Query query = _firestore.collection('users');
       
-      // Aplicar filtros - note que o Firebase tem limitações em consultas compostas
-      // Este é um exemplo simplificado
+      // Aplicar filtros
       if (role != null && role != 'all') {
-        query = query.orderByChild('role').equalTo(role);
-      } else if (status != null && status != 'all') {
-        query = query.orderByChild('status').equalTo(status);
+        query = query.where('role', isEqualTo: role);
       }
       
-      // Paginação simples
-      query = query.limitToFirst(limit);
-      
-      // Obter os dados
-      final snapshot = await query.once();
-      final List<UserDetails> users = [];
-      
-      if (snapshot.snapshot.value != null) {
-        Map<dynamic, dynamic> values = snapshot.snapshot.value as Map;
-        values.forEach((key, userData) {
-          // Adicionar o ID
-          Map<String, dynamic> user = Map<String, dynamic>.from(userData);
-          user['id'] = key;
-          
-          // Converter para o modelo
-          users.add(UserDetails.fromJson(user));
-        });
+      if (status != null && status != 'all') {
+        query = query.where('status', isEqualTo: status);
       }
       
-      return users;
+      // Paginação
+      query = query.limit(limit);
+      
+      if (lastUserId != null) {
+        DocumentSnapshot lastDoc = await _firestore.collection('users').doc(lastUserId).get();
+        query = query.startAfterDocument(lastDoc);
+      }
+      
+      // Executar consulta
+      QuerySnapshot snapshot = await query.get();
+      
+      return snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        data['id'] = doc.id;
+        return UserDetails.fromJson(data);
+      }).toList();
     } catch (e) {
       throw Exception('Failed to load users: $e');
     }
@@ -93,13 +72,12 @@ class AdminService {
   
   Future<UserDetails> getUserDetails(String userId) async {
     try {
-      final snapshot = await _usersRef.child(userId).once();
-      if (snapshot.snapshot.value == null) {
+      final snapshot = await _firestore.collection('users').doc(userId).get();
+      if (!snapshot.exists) {
         throw Exception('User not found');
       }
       
-      Map<String, dynamic> userData = 
-          Map<String, dynamic>.from(snapshot.snapshot.value as Map);
+      Map<String, dynamic> userData = snapshot.data()!;
       userData['id'] = userId;
       
       return UserDetails.fromJson(userData);
@@ -110,56 +88,46 @@ class AdminService {
   
   Future<void> updateUserStatus(String userId, String status) async {
     try {
-      await _usersRef.child(userId).update({
+      await _firestore.collection('users').doc(userId).update({
         'status': status,
-        'updated_at': ServerValue.timestamp,
+        'updated_at': FieldValue.serverTimestamp(),
       });
     } catch (e) {
       throw Exception('Failed to update user status: $e');
     }
   }
   
-  // Métodos de Relatórios Financeiros
-  
+  // Métodos Financeiros
   Future<FinancialReport> getFinancialReport({
     required DateTime startDate,
     required DateTime endDate,
   }) async {
     try {
-      // Obter transações dentro do intervalo de datas
-      Query query = _financialRef.child('transactions')
-          .orderByChild('date')
-          .startAt(startDate.millisecondsSinceEpoch)
-          .endAt(endDate.millisecondsSinceEpoch);
-          
-      final snapshot = await query.once();
+      Query query = _firestore.collection('financial/transactions/items')
+          .where('date', isGreaterThanOrEqualTo: startDate)
+          .where('date', isLessThanOrEqualTo: endDate);
       
-      // Processar os dados
+      QuerySnapshot snapshot = await query.get();
+      
       List<FinancialTransaction> transactions = [];
       double totalRevenue = 0;
       double platformFees = 0;
       double driverPayouts = 0;
       
-      if (snapshot.snapshot.value != null) {
-        Map<dynamic, dynamic> values = snapshot.snapshot.value as Map;
-        values.forEach((key, data) {
-          // Converter para formato adequado
-          Map<String, dynamic> transactionData = Map<String, dynamic>.from(data);
-          transactionData['id'] = key;
-          
-          // Criar objeto de transação
-          var transaction = FinancialTransaction.fromJson(transactionData);
-          transactions.add(transaction);
-          
-          // Calcular totais
-          if (transaction.type == 'credit') {
-            totalRevenue += transaction.amount;
-          } else if (transaction.type == 'fee') {
-            platformFees += transaction.amount;
-          } else if (transaction.type == 'payout') {
-            driverPayouts += transaction.amount;
-          }
-        });
+      for (var doc in snapshot.docs) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        data['id'] = doc.id;
+        
+        var transaction = FinancialTransaction.fromJson(data);
+        transactions.add(transaction);
+        
+        if (transaction.type == 'credit') {
+          totalRevenue += transaction.amount;
+        } else if (transaction.type == 'fee') {
+          platformFees += transaction.amount;
+        } else if (transaction.type == 'payout') {
+          driverPayouts += transaction.amount;
+        }
       }
       
       return FinancialReport(
@@ -176,7 +144,6 @@ class AdminService {
   }
   
   // Métodos de Gerenciamento de Corridas
-  
   Future<List<RideDetails>> getRides({
     String? status,
     DateTime? startDate,
@@ -186,66 +153,71 @@ class AdminService {
     String? lastRideId,
   }) async {
     try {
-      Query query = _ridesRef;
+      Query query = _firestore.collection('rides');
       
-      // Filtrar por status
       if (status != null && status != 'all') {
-        query = query.orderByChild('status').equalTo(status);
-      } 
-      // Filtrar por data - este é um exemplo simplificado
-      else if (startDate != null && endDate != null) {
-        query = query.orderByChild('created_at')
-            .startAt(startDate.millisecondsSinceEpoch)
-            .endAt(endDate.millisecondsSinceEpoch);
+        query = query.where('status', isEqualTo: status);
       }
       
-      // Limitar resultados
-      query = query.limitToFirst(limit);
+      if (startDate != null && endDate != null) {
+        query = query.where('created_at', isGreaterThanOrEqualTo: startDate)
+                     .where('created_at', isLessThanOrEqualTo: endDate);
+      }
       
-      final snapshot = await query.once();
-      final List<RideDetails> rides = [];
+      query = query.limit(limit);
       
-      if (snapshot.snapshot.value != null) {
-        Map<dynamic, dynamic> values = snapshot.snapshot.value as Map;
-        values.forEach((key, rideData) {
-          Map<String, dynamic> ride = Map<String, dynamic>.from(rideData);
-          ride['id'] = key;
-          
-          // Converter dados aninhados
-          if (ride['pickup'] is Map) {
-            Map<String, dynamic> pickup = Map<String, dynamic>.from(ride['pickup'] as Map);
-            ride['pickupAddress'] = pickup['address'];
+      if (lastRideId != null) {
+        DocumentSnapshot lastDoc = await _firestore.collection('rides').doc(lastRideId).get();
+        query = query.startAfterDocument(lastDoc);
+      }
+      
+      QuerySnapshot snapshot = await query.get();
+      
+      List<RideDetails> rides = [];
+      
+      for (var doc in snapshot.docs) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        data['id'] = doc.id;
+        
+        // Adaptar campos para o modelo
+        data['passengerName'] = data['passenger_name'] ?? 'Passageiro';
+        data['driverName'] = data['driver_name'];
+        data['fare'] = data['estimated_price'] ?? 0.0;
+        data['distance'] = data['estimated_distance'] ?? 0.0;
+        data['duration'] = data['estimated_duration'] ?? 0;
+        
+        // Endereços
+        if (data['pickup'] != null) {
+          data['pickupAddress'] = data['pickup']['address'];
+        }
+        
+        if (data['destination'] != null) {
+          data['destinationAddress'] = data['destination']['address'];
+        }
+        
+        // Datas
+        if (data['created_at'] != null) {
+          if (data['created_at'] is Timestamp) {
+            data['createdAt'] = (data['created_at'] as Timestamp).toDate();
           }
-          
-          if (ride['destination'] is Map) {
-            Map<String, dynamic> destination = Map<String, dynamic>.from(ride['destination'] as Map);
-            ride['destinationAddress'] = destination['address'];
+        }
+        
+        if (data['completed_at'] != null) {
+          if (data['completed_at'] is Timestamp) {
+            data['completedAt'] = (data['completed_at'] as Timestamp).toDate();
           }
-          
-          // Adaptar campos para corresponder ao modelo RideDetails
-          ride['passengerName'] = ride['passenger_name'] ?? 'Passageiro';
-          ride['driverName'] = ride['driver_name'];
-          ride['fare'] = ride['estimated_price'] ?? 0.0;
-          ride['distance'] = ride['estimated_distance'] ?? 0.0;
-          ride['duration'] = ride['estimated_duration'] ?? 0;
-          ride['createdAt'] = DateTime.fromMillisecondsSinceEpoch(ride['created_at'] ?? 0);
-          
-          if (ride['completed_at'] != null) {
-            ride['completedAt'] = DateTime.fromMillisecondsSinceEpoch(ride['completed_at']);
-          }
-          
-          // Adicionar informações de pagamento se disponíveis
-          if (ride['payment'] != null) {
-            Map<String, dynamic> payment = Map<String, dynamic>.from(ride['payment'] as Map);
-            ride['paymentInfo'] = {
-              'method': payment['method'] ?? ride['payment_method'] ?? 'unknown',
-              'status': payment['status'] ?? 'pending',
-              'transactionId': payment['transaction_id'],
-            };
-          }
-          
-          rides.add(RideDetails.fromJson(ride));
-        });
+        }
+        
+        // Pagamento
+        if (data['payment'] != null) {
+          data['paymentInfo'] = {
+            'method': data['payment']['method'] ?? data['payment_method'] ?? 'unknown',
+            'status': data['payment']['status'] ?? 'pending',
+            'transactionId': data['payment']['transaction_id'],
+          };
+        }
+        
+        rides.add(RideDetails.fromJson(data));
       }
       
       return rides;
@@ -254,128 +226,135 @@ class AdminService {
     }
   }
   
-  Future<RideDetailsFull> getRideDetails(String rideId) async {
-    try {
-      final snapshot = await _ridesRef.child(rideId).once();
-      if (snapshot.snapshot.value == null) {
-        throw Exception('Ride not found');
-      }
-      
-      // Converter dados brutos para o formato esperado
-      Map<String, dynamic> rideData = 
-          Map<String, dynamic>.from(snapshot.snapshot.value as Map);
-      rideData['id'] = rideId;
-      
-      // Processar dados aninhados
-      if (rideData['pickup'] is Map) {
-        Map<String, dynamic> pickup = Map<String, dynamic>.from(rideData['pickup'] as Map);
-        rideData['pickupAddress'] = pickup['address'];
-      }
-      
-      if (rideData['destination'] is Map) {
-        Map<String, dynamic> destination = Map<String, dynamic>.from(rideData['destination'] as Map);
-        rideData['destinationAddress'] = destination['address'];
-      }
-      
-      // Adaptar campos para corresponder ao modelo RideDetailsFull
-      rideData['passengerName'] = rideData['passenger_name'] ?? 'Passageiro';
-      rideData['driverName'] = rideData['driver_name'];
-      rideData['passengerId'] = rideData['passenger_id'] ?? '';
-      rideData['driverId'] = rideData['driver_id'];
-      rideData['fare'] = rideData['estimated_price'] ?? 0.0;
-      rideData['distance'] = rideData['estimated_distance'] ?? 0.0;
-      rideData['duration'] = rideData['estimated_duration'] ?? 0;
-      rideData['platformFee'] = rideData['platform_fee'] ?? (rideData['estimated_price'] ?? 0.0) * 0.15; // 15% como exemplo
-      rideData['createdAt'] = DateTime.fromMillisecondsSinceEpoch(rideData['created_at'] ?? 0);
-      
-      if (rideData['completed_at'] != null) {
-        rideData['completedAt'] = DateTime.fromMillisecondsSinceEpoch(rideData['completed_at']);
-      }
-      
-      // Obter histórico de status se existir
-      if (rideData['status_history'] is List) {
-        List<dynamic> history = rideData['status_history'] as List;
-        List<Map<String, dynamic>> statusHistory = [];
-        
-        for (var item in history) {
-          Map<String, dynamic> statusChange = Map<String, dynamic>.from(item);
-          statusChange['timestamp'] = DateTime.fromMillisecondsSinceEpoch(statusChange['timestamp'] ?? 0);
-          statusHistory.add(statusChange);
-        }
-        
-        rideData['statusHistory'] = statusHistory;
-      }
-      
-      // Adicionar informações de pagamento se disponíveis
-      if (rideData['payment'] != null) {
-        Map<String, dynamic> payment = Map<String, dynamic>.from(rideData['payment'] as Map);
-        rideData['paymentInfo'] = {
-          'method': payment['method'] ?? rideData['payment_method'] ?? 'unknown',
-          'status': payment['status'] ?? 'pending',
-          'transactionId': payment['transaction_id'],
-        };
-      }
-      
-      return RideDetailsFull.fromJson(rideData);
-    } catch (e) {
-      throw Exception('Failed to load ride details: $e');
+  // Configurações
+  // lib/core/services/admin/admin_service.dart
+Future<Map<String, dynamic>> getAppSettings() async {
+  try {
+    final snapshot = await _firestore.collection('admin').doc('settings').get();
+    if (!snapshot.exists) {
+      // Retornar valores padrão
+      return {
+        'enableNotifications': true,
+        'requireDocumentVerification': true,
+        'allowCashPayment': true,
+        'platformFeePercentage': 15.0,
+        'minFare': 5.0,
+        'pricePerKm': 2.0,
+        'pricePerMinute': 0.2,
+        'language': 'pt_BR',
+        'theme': 'system',
+      };
     }
+    
+    return snapshot.data()!;
+  } catch (e) {
+    throw Exception('Falha ao carregar configurações: $e');
   }
-  
-  Future<void> cancelRide(String rideId, String reason) async {
-    try {
-      // Atualizar o status
-      await _ridesRef.child(rideId).update({
-        'status': 'cancelled',
-        'cancelled_at': ServerValue.timestamp,
-        'cancelled_by': 'admin',
-        'cancellation_reason': reason,
-      });
-      
-      // Adicionar ao histórico de status
-      DatabaseReference historyRef = _ridesRef.child(rideId).child('status_history').push();
-      await historyRef.set({
-        'status': 'cancelled',
-        'timestamp': ServerValue.timestamp,
-        'comment': reason,
-        'by': 'admin',
-      });
-    } catch (e) {
-      throw Exception('Failed to cancel ride: $e');
+}
+
+Future<void> updateAppSettings(Map<String, dynamic> settings) async {
+  try {
+    await _firestore.collection('admin').doc('settings').set(
+      settings,
+      SetOptions(merge: true),
+    );
+  } catch (e) {
+    throw Exception('Falha ao atualizar configurações: $e');
+  }
+}
+
+// Métodos getRideDetails e cancelRide DEVEM ESTAR NO MESMO NÍVEL 
+// que updateAppSettings, NÃO DENTRO DELE
+Future<RideDetailsFull> getRideDetails(String rideId) async {
+  try {
+    final snapshot = await _firestore.collection('rides').doc(rideId).get();
+    if (!snapshot.exists) {
+      throw Exception('Corrida não encontrada');
     }
-  }
-  
-  // Métodos de Configurações
-  
-  Future<Map<String, dynamic>> getAppSettings() async {
-    try {
-      final snapshot = await _settingsRef.once();
-      if (snapshot.snapshot.value == null) {
-        // Retornar valores padrão se não houver configurações
-        return {
-          'enableNotifications': true,
-          'requireDocumentVerification': true,
-          'allowCashPayment': true,
-          'platformFeePercentage': 15.0,
-          'minFare': 5.0,
-          'pricePerKm': 2.0,
-          'pricePerMinute': 0.2,
-          'language': 'pt_BR',
-          'theme': 'system',
-        };
-      }
-      
-      return Map<String, dynamic>.from(snapshot.snapshot.value as Map);
-    } catch (e) {
-      throw Exception('Failed to load app settings: $e');
+    
+    Map<String, dynamic> data = snapshot.data()!;
+    data['id'] = rideId;
+    
+    // Adaptar campos para o modelo
+    data['passengerName'] = data['passenger_name'] ?? 'Passageiro';
+    data['driverName'] = data['driver_name'];
+    data['fare'] = data['estimated_price'] ?? 0.0;
+    data['distance'] = data['estimated_distance'] ?? 0.0;
+    data['duration'] = data['estimated_duration'] ?? 0;
+    
+    // Campos específicos do RideDetailsFull
+    data['passengerId'] = data['passenger_id'] ?? '';
+    data['driverId'] = data['driver_id'];
+    data['platformFee'] = _calculatePlatformFee(data);
+    
+    // Buscar histórico de status
+    data['statusHistory'] = await _fetchStatusHistory(rideId);
+    
+    // Datas
+    if (data['created_at'] is Timestamp) {
+      data['createdAt'] = (data['created_at'] as Timestamp).millisecondsSinceEpoch;
     }
-  }
-  
-  Future<void> updateAppSettings(Map<String, dynamic> settings) async {
-    try {
-      await _settingsRef.update(settings);
-    } catch (e) {
-      throw Exception('Failed to update app settings: $e');
+    
+    if (data['completed_at'] is Timestamp) {
+      data['completedAt'] = (data['completed_at'] as Timestamp).millisecondsSinceEpoch;
     }
+    
+    // Pagamento
+    if (data['payment'] != null) {
+      data['paymentInfo'] = {
+        'method': data['payment']['method'] ?? data['payment_method'] ?? 'unknown',
+        'status': data['payment']['status'] ?? 'pending',
+        'transactionId': data['payment']['transaction_id'],
+      };
+    }
+    
+    return RideDetailsFull.fromJson(data);
+  } catch (e) {
+    throw Exception('Falha ao carregar detalhes da corrida: $e');
   }
+}
+
+// Métodos auxiliares
+double _calculatePlatformFee(Map<String, dynamic> rideData) {
+  // Lógica para calcular a taxa da plataforma
+  double fare = rideData['estimated_price'] ?? 0.0;
+  return fare * 0.1; // Exemplo: 10% de taxa
+}
+
+Future<List<StatusChange>> _fetchStatusHistory(String rideId) async {
+  try {
+    final historySnapshot = await _firestore
+        .collection('rides')
+        .doc(rideId)
+        .collection('status_history')
+        .orderBy('timestamp')
+        .get();
+    
+    return historySnapshot.docs.map((doc) {
+      Map<String, dynamic> data = doc.data();
+      data['timestamp'] = doc['timestamp']?.millisecondsSinceEpoch ?? 0;
+      return StatusChange.fromJson(data);
+    }).toList();
+  } catch (e) {
+    // Log do erro ou tratamento conforme necessário
+    return [];
+  }
+}
+
+Future<void> cancelRide(String rideId, {String reason = 'Cancelado pelo administrador'}) async {
+  try {
+    // Buscar a corrida primeiro para validar sua existência
+    await getRideDetails(rideId);
+    
+    // Atualizar o status da corrida para cancelado
+    await _firestore.collection('rides').doc(rideId).update({
+      'status': 'cancelled',
+      'cancellation_reason': reason,
+      'cancelled_at': FieldValue.serverTimestamp(),
+      'updated_at': FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    throw Exception('Falha ao cancelar corrida: $e');
+  }
+}
 }

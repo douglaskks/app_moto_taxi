@@ -225,92 +225,93 @@ class FinancialReportScreen extends StatelessWidget with AdminRouteMixin {
   }
   
   Widget _buildRevenueChart(BuildContext context, FinancialReport report) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Receita por Dia',
-          style: Theme.of(context).textTheme.titleLarge, // Substituído headline5
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: SizedBox(
-              height: 250,
-              child: BarChart(
-                BarChartData(
-                  alignment: BarChartAlignment.spaceAround,
-                  titlesData: FlTitlesData(
-                    show: true,
-                    bottomTitles: AxisTitles( // Substituído SideTitles
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) => Text(
-                          value.toInt().toString(),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Receita por Dia',
+        style: Theme.of(context).textTheme.titleLarge,
+      ),
+      const SizedBox(height: 16),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: SizedBox(
+            height: 250,
+            child: BarChart(
+              BarChartData(
+                alignment: BarChartAlignment.spaceAround,
+                titlesData: FlTitlesData(
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      getTitlesWidget: (value, meta) {
+                        // Converte o índice para o dia correspondente
+                        if (value >= 0 && value < report.dailyRevenues.length) {
+                          return Text(
+                            DateFormat('dd/MM').format(report.dailyRevenues[value.toInt()].date),
+                            style: const TextStyle(
+                              color: Colors.grey,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 10,
+                            ),
+                          );
+                        }
+                        return const Text('');
+                      },
+                      reservedSize: 40,
+                    ),
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      getTitlesWidget: (value, meta) {
+                        return Text(
+                          'R\$ ${value.toStringAsFixed(0)}',
                           style: const TextStyle(
                             color: Colors.grey,
                             fontWeight: FontWeight.bold,
                             fontSize: 10,
                           ),
-                        ),
-                        reservedSize: 38,
-                      ),
-                    ),
-                    leftTitles: AxisTitles( // Substituído SideTitles
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) => Text(
-                          value.toInt().toString(),
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
-                          ),
-                        ),
-                        reservedSize: 38,
-                      ),
+                        );
+                      },
+                      reservedSize: 50,
                     ),
                   ),
-                  borderData: FlBorderData(
-                    show: false,
-                  ),
-                  barGroups: [
-                    BarChartGroupData(
-                      x: 0,
-                      barRods: [
-                        BarChartRodData(
-                          toY: 250, // Substituído y
-                          color: Colors.green, // Substituído colors
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(6),
-                            topRight: Radius.circular(6),
-                          ),
-                        ),
-                      ],
-                    ),
-                    BarChartGroupData(
-                      x: 1,
-                      barRods: [
-                        BarChartRodData(
-                          toY: 300, // Substituído y
-                          color: Colors.green, // Substituído colors
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(6),
-                            topRight: Radius.circular(6),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
                 ),
+                borderData: FlBorderData(show: false),
+                barGroups: report.dailyRevenues.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final dailyRevenue = entry.value;
+                  return BarChartGroupData(
+                    x: index,
+                    barRods: [
+                      BarChartRodData(
+                        toY: dailyRevenue.amount,
+                        color: Colors.green,
+                        width: 15,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(6),
+                          topRight: Radius.circular(6),
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+                gridData: FlGridData(show: false),
+                maxY: report.dailyRevenues.isNotEmpty 
+                  ? report.dailyRevenues.map((e) => e.amount).reduce((a, b) => a > b ? a : b) * 1.2 
+                  : 100,
               ),
             ),
           ),
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
+}
   
   Widget _buildTransactionsList(
     BuildContext context,

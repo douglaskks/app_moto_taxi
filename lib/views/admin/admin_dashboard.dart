@@ -110,87 +110,159 @@ class AdminDashboardScreen extends StatelessWidget with AdminRouteMixin {
     );
   }
   
-  Widget _buildActivityCharts(DashboardStats stats) {
-    return SizedBox(
-      height: 250,
-      child: LineChart(
-        LineChartData(
-          lineBarsData: [
-            LineChartBarData(
-              spots: stats.hourlyRides.asMap().entries.map((entry) {
-                return FlSpot(entry.key.toDouble(), entry.value.toDouble());
-              }).toList(),
-              isCurved: true,
-              color: Colors.blue,
-              barWidth: 4,
-              dotData: const FlDotData(show: false),
+ Widget _buildActivityCharts(DashboardStats stats) {
+  return Card(
+    elevation: 4,
+    child: Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Corridas por Hora',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
             ),
-          ],
-          titlesData: FlTitlesData(
-            bottomTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 22,
-                getTitlesWidget: (value, meta) {
-                  if (value.toInt() % 4 == 0) {
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(
-                        '${value.toInt()}h',
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontWeight: FontWeight.bold,
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 250,
+            child: LineChart(
+              LineChartData(
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: true,
+                  horizontalInterval: 1,
+                  verticalInterval: 1,
+                  getDrawingHorizontalLine: (value) => FlLine(
+                    color: Colors.grey.withOpacity(0.2),
+                    strokeWidth: 1,
+                  ),
+                  getDrawingVerticalLine: (value) => FlLine(
+                    color: Colors.grey.withOpacity(0.2),
+                    strokeWidth: 1,
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  show: true,
+                  rightTitles: AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  topTitles: AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 30,
+                      interval: 1,
+                      getTitlesWidget: (value, meta) {
+                        // Converte o índice da hora para hora do dia
+                        final hour = value.toInt();
+                        return Text(
+                          '$hour:00',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      interval: 1,
+                      getTitlesWidget: (value, meta) {
+                        return Text(
+                          value.toInt().toString(),
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        );
+                      },
+                      reservedSize: 42,
+                    ),
+                  ),
+                ),
+                borderData: FlBorderData(
+                  show: false,
+                ),
+                minX: 0,
+                maxX: 23, // 24 horas
+                minY: 0,
+                maxY: stats.hourlyRides.isNotEmpty 
+                    ? stats.hourlyRides.reduce((a, b) => a > b ? a : b).toDouble() + 1 
+                    : 10,
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: stats.hourlyRides.asMap().entries.map((entry) {
+                      return FlSpot(entry.key.toDouble(), entry.value.toDouble());
+                    }).toList(),
+                    isCurved: true,
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.blue.shade300,
+                        Colors.blue.shade700,
+                      ],
+                    ),
+                    barWidth: 4,
+                    isStrokeCapRound: true,
+                    dotData: FlDotData(
+                      show: true,
+                      getDotPainter: (spot, percent, barData, index) {
+                        return FlDotCirclePainter(
+                          radius: 4,
+                          color: Colors.white,
+                          strokeWidth: 2,
+                          strokeColor: Colors.blue.shade700,
+                        );
+                      },
+                    ),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.blue.shade300.withOpacity(0.4),
+                          Colors.blue.shade700.withOpacity(0.1),
+                        ],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                    ),
+                  ),
+                ],
+                extraLinesData: ExtraLinesData(
+                  horizontalLines: [
+                    HorizontalLine(
+                      y: stats.hourlyRides.isNotEmpty 
+                          ? stats.hourlyRides.reduce((a, b) => a + b) / stats.hourlyRides.length 
+                          : 0,
+                      color: Colors.green.withOpacity(0.6),
+                      strokeWidth: 2,
+                      dashArray: [5, 5],
+                      label: HorizontalLineLabel(
+                        show: true,
+                        style: TextStyle(
+                          color: Colors.green,
                           fontSize: 12,
                         ),
                       ),
-                    );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-            ),
-            leftTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 28,
-                getTitlesWidget: (value, meta) {
-                  return Text(
-                    value.toInt().toString(),
-                    style: const TextStyle(
-                      color: Colors.grey,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
                     ),
-                    textAlign: TextAlign.right,
-                  );
-                },
+                  ],
+                ),
               ),
-            ),
-            topTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
-            ),
-            rightTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOutQuad,
             ),
           ),
-          gridData: FlGridData(
-            show: true,
-            drawVerticalLine: false,
-            getDrawingHorizontalLine: (value) {
-              return FlLine(
-                color: Colors.grey[300],
-                strokeWidth: 1,
-              );
-            },
-          ),
-          borderData: FlBorderData(
-            show: true,
-            border: Border.all(color: Colors.grey[300]!),
-          ),
-        ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
   
   Widget _buildActiveRidesList(List<ActiveRide> rides) {
     if (rides.isEmpty) {

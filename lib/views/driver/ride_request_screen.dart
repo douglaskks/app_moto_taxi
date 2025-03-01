@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import '../../core/services/realtime_database_service.dart';
 
 class RideRequestScreen extends StatefulWidget {
+  // Adicionando rideId como parâmetro
+  final String? rideId;
   final String passengerId;
   final String passengerName;
   final double passengerRating;
@@ -10,11 +13,14 @@ class RideRequestScreen extends StatefulWidget {
   final double estimatedDistance;
   final double estimatedDuration;
   final double estimatedFare;
+  // Adicionando distância até o passageiro
+  final double distanceToPickup;
   final VoidCallback onAccept;
   final VoidCallback onReject;
 
   const RideRequestScreen({
     Key? key,
+    this.rideId, // Opcional para compatibilidade com código existente
     required this.passengerId,
     required this.passengerName,
     required this.passengerRating,
@@ -23,6 +29,7 @@ class RideRequestScreen extends StatefulWidget {
     required this.estimatedDistance,
     required this.estimatedDuration,
     required this.estimatedFare,
+    this.distanceToPickup = 0.0, // Valor padrão para compatibilidade
     required this.onAccept,
     required this.onReject,
   }) : super(key: key);
@@ -36,7 +43,11 @@ class _RideRequestScreenState extends State<RideRequestScreen> with SingleTicker
   late Animation<double> _scaleAnimation;
   
   Timer? _timeoutTimer;
-  int _remainingTime = 15; // 15 segundos para aceitar
+  int _remainingTime = 30; // 15 segundos para aceitar
+  
+  // Adicionar serviço de banco de dados e estado de carregamento
+  final RealtimeDatabaseService _databaseService = RealtimeDatabaseService();
+  bool _isAccepting = false;
   
   @override
   void initState() {
@@ -75,6 +86,41 @@ class _RideRequestScreenState extends State<RideRequestScreen> with SingleTicker
     _animationController.dispose();
     _timeoutTimer?.cancel();
     super.dispose();
+  }
+  
+  // Adicionar método para aceitar corrida com Firebase
+  void _acceptRide() async {
+    // Se não houver rideId, usar callback normal
+    if (widget.rideId == null) {
+      widget.onAccept();
+      return;
+    }
+    
+    setState(() {
+      _isAccepting = true;
+    });
+    
+    try {
+      // Estimar tempo de chegada baseado na distância (5 minutos + 1 minuto para cada km)
+      double estimatedArrivalTime = 5 + widget.distanceToPickup;
+      
+      // Aceitar corrida no Firebase
+      await _databaseService.acceptRide(widget.rideId!, estimatedArrivalTime);
+      
+      // Chamar callback de aceite
+      widget.onAccept();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao aceitar corrida: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      
+      setState(() {
+        _isAccepting = false;
+      });
+    }
   }
 
   @override
@@ -158,6 +204,31 @@ class _RideRequestScreenState extends State<RideRequestScreen> with SingleTicker
                   ],
                 ),
                 SizedBox(height: 24),
+                
+                // Adicionar distância até o passageiro se for > 0
+                if (widget.distanceToPickup > 0)
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    margin: EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.near_me, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text(
+                          'Distância até o passageiro: ${widget.distanceToPickup.toStringAsFixed(1)} km',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 
                 // Detalhes da corrida
                 Container(
@@ -303,7 +374,9 @@ class _RideRequestScreenState extends State<RideRequestScreen> with SingleTicker
                   children: [
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: _isAccepting 
+                            ? null 
+                            : () {
                           _timeoutTimer?.cancel();
                           widget.onReject();
                         },
@@ -324,14 +397,18 @@ class _RideRequestScreenState extends State<RideRequestScreen> with SingleTicker
                     SizedBox(width: 16),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: _isAccepting 
+                            ? null 
+                            : () {
                           _timeoutTimer?.cancel();
-                          widget.onAccept();
+                          _acceptRide();
                         },
-                        child: Text(
-                          'ACEITAR',
-                          style: TextStyle(fontSize: 16),
-                        ),
+                        child: _isAccepting
+                            ? CircularProgressIndicator(color: Colors.white)
+                            : Text(
+                                'ACEITAR',
+                                style: TextStyle(fontSize: 16),
+                              ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green,
                           padding: EdgeInsets.symmetric(vertical: 16),
@@ -343,6 +420,16 @@ class _RideRequestScreenState extends State<RideRequestScreen> with SingleTicker
                     ),
                   ],
                 ),
+                
+                // Mostrar ID da corrida se disponível (pode ocultar em produção)
+                if (widget.rideId != null && false) // Define como true para debug
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16.0),
+                    child: Text(
+                      'ID: ${widget.rideId}',
+                      style: TextStyle(color: Colors.grey, fontSize: 10),
+                    ),
+                  ),
               ],
             ),
           ),

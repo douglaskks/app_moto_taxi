@@ -2,7 +2,10 @@
 import 'package:app_moto_taxe/controllers/bloc/auth/auth_bloc.dart';
 import 'package:app_moto_taxe/controllers/bloc/auth/auth_event.dart';
 import 'package:app_moto_taxe/controllers/bloc/auth/auth_state.dart';
+import 'package:app_moto_taxe/controllers/bloc/ride/ride_bloc.dart';
 import 'package:app_moto_taxe/core/services/auth_service.dart';
+import 'package:app_moto_taxe/core/services/realtime_database_service.dart';
+import 'package:app_moto_taxe/core/utils/debug_bloc_observer.dart';
 import 'package:app_moto_taxe/firebase_options.dart';
 import 'package:app_moto_taxe/routes.dart';
 import 'package:app_moto_taxe/views/admin/admin_home.dart';
@@ -25,6 +28,9 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   
+  // Habilitar o observer de bloc para debug
+  Bloc.observer = DebugBlocObserver();
+  
   // Depois inicialize o App Check
   await FirebaseAppCheck.instance.activate(
     androidProvider: AndroidProvider.debug,
@@ -44,6 +50,7 @@ class _MyAppState extends State<MyApp> {
   final AuthService _authService = AuthService();
   final NotificationService _notificationService = NotificationService();
   final NotificationManager _notificationManager = NotificationManager();
+  final RealtimeDatabaseService _databaseService = RealtimeDatabaseService();
 
   @override
   void initState() {
@@ -65,6 +72,10 @@ class _MyAppState extends State<MyApp> {
       providers: [
         BlocProvider<AuthBloc>(
           create: (context) => AuthBloc(_authService)..add(AppStarted()),
+        ),
+        // Adicionar o RideBloc ao MultiBlocProvider
+        BlocProvider<RideBloc>(
+          create: (context) => RideBloc(_databaseService),
         ),
         // Outros BLoCs podem ser adicionados aqui
       ],

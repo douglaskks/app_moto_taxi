@@ -8,10 +8,10 @@ import '../../models/admin/ride_management.dart';
 class RideDetailsScreen extends StatelessWidget {
   final String rideId;
   
-  const RideDetailsScreen({
-    Key? key,
+    const RideDetailsScreen({
+    super.key,  // Mudança para usar super.key
     required this.rideId,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -57,9 +57,7 @@ class RideDetailsScreen extends StatelessWidget {
                     const SizedBox(height: 16),
                     _buildPaymentCard(context, ride),
                     const SizedBox(height: 16),
-                    if (ride.statusHistory != null && ride.statusHistory!.isNotEmpty)
-                      _buildStatusHistoryCard(context, ride.statusHistory!),
-                    const SizedBox(height: 24),
+                    // Remova ou ajuste a verificação de statusHistory
                     _buildActionButtons(context, ride),
                   ],
                 ),
@@ -493,32 +491,41 @@ class RideDetailsScreen extends StatelessWidget {
     );
   }
   
-  Widget _buildStatusHistoryCard(BuildContext context, List<StatusChange> history) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Histórico de Status',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 16),
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: history.length,
-              itemBuilder: (context, index) {
-                final statusChange = history[index];
-                return _buildStatusHistoryItem(context, statusChange, index == 0);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
+  // Exemplo de como usar os novos campos
+Widget _buildStatusHistoryCard(BuildContext context, RideDetailsFull ride) {
+  final statusHistory = ride.statusHistory;
+  if (statusHistory == null || statusHistory.isEmpty) {
+    return SizedBox.shrink();
   }
+  
+  return Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Histórico de Status',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          ListView.builder(
+            shrinkWrap: true,
+            physics: NeverScrollableScrollPhysics(),
+            itemCount: statusHistory.length,
+            itemBuilder: (context, index) {
+              final status = statusHistory[index];
+              return ListTile(
+                title: Text(status.status),
+                subtitle: Text(status.comment ?? ''),
+                trailing: Text(_formatDate(status.timestamp)),
+              );
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+}
   
   Widget _buildStatusHistoryItem(BuildContext context, StatusChange statusChange, bool isFirst) {
     final dateFormat = DateFormat('dd/MM/yyyy HH:mm');

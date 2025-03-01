@@ -1,16 +1,24 @@
 // Arquivo: lib/views/driver/driver_home.dart
 
+import 'package:app_moto_taxe/models/ride_request.dart';
+import 'package:app_moto_taxe/views/ride_in_progress_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:intl/intl.dart';
 import 'dart:async';
 import '../../controllers/bloc/auth/auth_bloc.dart';
 import '../../controllers/bloc/auth/auth_event.dart';
 import '../../core/services/realtime_database_service.dart';
+import '../../core/services/ride_listener_service.dart';
 import 'ride_request_screen.dart';
 import 'driver_earnings_screen.dart';
 import 'driver_profile_screen.dart';
+import 'dart:math' as math;
 
 class DriverHome extends StatefulWidget {
   const DriverHome({Key? key}) : super(key: key);
@@ -22,6 +30,7 @@ class DriverHome extends StatefulWidget {
 class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   final Completer<GoogleMapController> _controller = Completer();
   final RealtimeDatabaseService _databaseService = RealtimeDatabaseService();
+  final RideListenerService _rideListenerService = RideListenerService();
   
   // Estados
   bool _isOnline = false;
@@ -37,6 +46,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   double _totalEarningsToday = 0.0;
   int _ridesCompletedToday = 0;
   double _rating = 4.8;
+  String _driverName = 'Motorista';
   
   // Marcadores no mapa
   final Set<Marker> _markers = {};
@@ -57,6 +67,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
     _loadDriverData();
   }
   
+  // Modifique o método dispose para limpar os recursos do RideListenerService
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -64,6 +75,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
     if (_isOnline) {
       _goOffline();
     }
+    _rideListenerService.dispose();
     super.dispose();
   }
   
@@ -160,16 +172,85 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
     });
   }
   
-  Future<void> _loadDriverData() async {
-    // Normalmente você carregaria esses dados do Firestore ou outra fonte
-    // Para simplificar, estamos usando dados simulados
+  // Modificações no método _loadDriverData():
+
+Future<void> _loadDriverData() async {
     setState(() {
-      _totalEarningsToday = 120.50;
-      _ridesCompletedToday = 8;
-      _rating = 4.8;
+      _isLoading = true;
     });
+
+    try {
+      final User? currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('Usuário não está autenticado');
+      }
+
+      // Buscar dados do motorista no Firestore
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(currentUser.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        throw Exception('Perfil de motorista não encontrado');
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>;
+      
+      // Buscar estatísticas do dia
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final dailyStatsDoc = await FirebaseFirestore.instance
+          .collection('driver_stats_daily')
+          .doc('${currentUser.uid}_$today')
+          .get();
+
+      double todayEarnings = 0.0;
+      int todayRides = 0;
+
+      if (dailyStatsDoc.exists) {
+        final statsData = dailyStatsDoc.data() as Map<String, dynamic>;
+        todayEarnings = statsData['total_amount'] ?? 0.0;
+        todayRides = statsData['total_rides'] ?? 0;
+      }
+
+      // Buscar média de avaliações
+      final ridesQuery = await FirebaseFirestore.instance
+          .collection('rides')
+          .where('driver_id', isEqualTo: currentUser.uid)
+          .where('driver_rating', isGreaterThan: 0)
+          .get();
+
+      double totalRating = 0.0;
+      int ratedRidesCount = 0;
+
+      for (var doc in ridesQuery.docs) {
+        final data = doc.data();
+        if (data['driver_rating'] != null) {
+          totalRating += (data['driver_rating'] as num).toDouble();
+          ratedRidesCount++;
+        }
+      }
+
+      // Calcular média de avaliações (padrão 5.0 se não houver avaliações)
+      final double averageRating = ratedRidesCount > 0 
+          ? totalRating / ratedRidesCount 
+          : 5.0;
+
+      setState(() {
+        _totalEarningsToday = todayEarnings;
+        _ridesCompletedToday = todayRides;
+        _rating = averageRating;
+        _driverName = userData['name'] ?? 'Motorista';
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Erro ao carregar dados do motorista: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
-  
+
   void _toggleOnlineStatus() async {
     if (!_locationPermissionGranted) {
       _checkLocationPermission();
@@ -196,72 +277,223 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   }
   
   Future<void> _goOnline() async {
-    // Verificar se temos localização atual
-    if (_currentPosition == null) {
-      try {
-        _currentPosition = await Geolocator.getCurrentPosition();
-      } catch (e) {
-        _showSnackbar('Erro ao obter localização. Tente novamente.');
-        return;
-      }
+  print("Iniciando processo para ficar online...");
+  
+  // Verificar se temos localização atual
+  if (_currentPosition == null) {
+    print("Localização atual não disponível, tentando obter...");
+    try {
+      _currentPosition = await Geolocator.getCurrentPosition();
+      print("Localização obtida: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
+    } catch (e) {
+      print("ERRO ao obter localização: $e");
+      _showSnackbar('Erro ao obter localização. Tente novamente.');
+      return;
     }
-    
-    // Atualizar status online no Firebase
-    await _databaseService.setDriverAvailability(true, _vehicleType);
-    
-    // Iniciar monitoramento de localização
-    _startLocationTracking();
-    
-    setState(() {
-      _isOnline = true;
-    });
-    
-    _showSnackbar('Você está online! Aguardando corridas...');
+  } else {
+    print("Usando localização atual: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}");
   }
+  
+  // Atualizar status online no Firebase
+  print("Atualizando status para disponível no Firebase...");
+  try {
+    await _databaseService.setDriverAvailability(true, _vehicleType);
+    print("Status atualizado com sucesso no Firebase!");
+  } catch (e) {
+    print("ERRO ao atualizar status no Firebase: $e");
+    _showSnackbar('Erro ao ficar online: ${e.toString()}');
+    return;
+  }
+  
+  // Iniciar monitoramento de localização
+  print("Iniciando monitoramento de localização...");
+  _startLocationTracking();
+  
+  // Iniciar monitoramento de solicitações de corrida
+  if (_currentPosition != null) {
+    print("Iniciando monitoramento de solicitações de corrida...");
+    _rideListenerService.startListeningForRideRequests(
+      _currentPosition!,
+      context,
+      _handleRideAccepted,
+    );
+  }
+  
+  setState(() {
+    _isOnline = true;
+  });
+  
+  _showSnackbar('Você está online! Aguardando corridas...');
+  print("Motorista agora está online e aguardando corridas.");
+}
   
   Future<void> _goOffline() async {
-    // Atualizar status offline no Firebase
-    await _databaseService.setDriverAvailability(false, _vehicleType);
-    
-    // Parar monitoramento de localização
-    _stopLocationTracking();
-    
+  // Atualizar status offline no Firebase
+  await _databaseService.setDriverAvailability(false, _vehicleType);
+  
+  // Parar monitoramento de localização
+  _stopLocationTracking();
+  
+  // Parar monitoramento de solicitações de corrida
+  _rideListenerService.stopListeningForRideRequests();
+  
+  setState(() {
+    _isOnline = false;
+  });
+  
+  _showSnackbar('Você está offline.');
+}
+
+  // Este método precisa ser implementado no arquivo driver_home.dart
+// Este método precisa ser implementado no arquivo driver_home.dart
+void _handleRideAccepted(String rideId) async {
+  debugPrint("DriverHome: Corrida $rideId aceita pelo motorista");
+  
+  try {
+    // Mostrar indicador de carregamento
     setState(() {
-      _isOnline = false;
+      _isLoading = true;
     });
     
-    _showSnackbar('Você está offline.');
+    // Estimar tempo de chegada
+    double estimatedArrivalTime = 5.0;
+    
+    // Obter dados completos da corrida para exibir na tela de progresso
+    final rideSnapshot = await FirebaseDatabase.instance.ref()
+        .child('rides')
+        .child(rideId)
+        .get();
+    
+    if (!rideSnapshot.exists) {
+      _showSnackbar('Erro: Corrida não encontrada.');
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
+    
+    // Converter snapshot para Map
+    final rideData = Map<String, dynamic>.from(rideSnapshot.value as Map);
+    
+    // Calcular distância até o ponto de embarque
+    if (_currentPosition != null) {
+      final pickupLat = rideData['pickup']['latitude'] as double;
+      final pickupLng = rideData['pickup']['longitude'] as double;
+      
+      double distanceToPickup = Geolocator.distanceBetween(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+        pickupLat,
+        pickupLng,
+      ) / 1000; // Converter de metros para km
+      
+      // Estimar 1 minuto por km, com mínimo de 3 minutos
+      estimatedArrivalTime = math.max(3, distanceToPickup);
+      
+      debugPrint("DriverHome: Distância até o passageiro: ${distanceToPickup.toStringAsFixed(2)} km");
+      debugPrint("DriverHome: Tempo estimado de chegada: ${estimatedArrivalTime.toStringAsFixed(1)} min");
+    }
+    
+    // Adicionar informações do passageiro aos dados da corrida
+    rideData['passenger_name'] = rideData['passenger_name'] ?? 'Passageiro';
+    rideData['passenger_rating'] = rideData['passenger_rating'] ?? 5.0;
+    
+    // Atualizar corrida no Firebase com o status "accepted" e tempo estimado
+    await _databaseService.acceptRide(rideId, estimatedArrivalTime);
+    debugPrint("DriverHome: Status da corrida atualizado para 'accepted' no Firebase");
+    
+    // Atualizar a localização inicial do motorista no registro da corrida
+    if (_currentPosition != null) {
+      await FirebaseDatabase.instance.ref()
+        .child('rides/$rideId/driver_location')
+        .set({
+          'latitude': _currentPosition!.latitude,
+          'longitude': _currentPosition!.longitude,
+          'last_updated': ServerValue.timestamp,
+        });
+      debugPrint("DriverHome: Localização inicial do motorista atualizada no Firebase");
+    }
+    
+    // Esconder indicador de carregamento
+    setState(() {
+      _isLoading = false;
+    });
+    
+    // Criar objeto RideRequest a partir dos dados
+    final request = RideRequest.fromMap(
+      rideData,
+      distanceToPickup: estimatedArrivalTime
+    );
+    
+    // Navegar para a tela de corrida em progresso fornecendo todos os parâmetros necessários
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RideInProgressScreen(
+          rideId: rideId,
+          rideData: rideData,
+          request: request,
+        ),
+      ),
+    ).then((_) {
+      // Quando retornar da tela de corrida, verificar se ainda está online
+      if (_isOnline) {
+        // Voltar a monitorar solicitações de corrida
+        if (_currentPosition != null) {
+          _rideListenerService.startListeningForRideRequests(
+            _currentPosition!,
+            context,
+            _handleRideAccepted,
+          );
+        }
+      }
+    });
+    
+    // Mostrar mensagem de confirmação
+    _showSnackbar('Corrida aceita! Dirija até o passageiro.');
+  } catch (e) {
+    debugPrint("DriverHome: Erro ao aceitar corrida: $e");
+    _showSnackbar('Erro ao aceitar corrida: ${e.toString()}');
+    setState(() {
+      _isLoading = false;
+    });
   }
+}
   
   void _startLocationTracking() {
-    // Cancelar stream existente se houver
-    _positionStream?.cancel();
-    
-    // Iniciar monitoramento de localização
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10, // atualizar a cada 10 metros
-      ),
-    ).listen((Position position) {
-      setState(() {
-        _currentPosition = position;
-        _updateDriverMarker(position);
-      });
-      
-      // Enviar localização atualizada para o Firebase
-      _databaseService.updateDriverLocation(
-        position.latitude, 
-        position.longitude
-      );
-      
-      // Atualizar câmera do mapa
-      _updateCameraPosition(position);
+  // Cancelar stream existente se houver
+  _positionStream?.cancel();
+  
+  // Iniciar monitoramento de localização
+  _positionStream = Geolocator.getPositionStream(
+    locationSettings: const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10, // atualizar a cada 10 metros
+    ),
+  ).listen((Position position) {
+    setState(() {
+      _currentPosition = position;
+      _updateDriverMarker(position);
     });
     
-    // Iniciar também o serviço para monitoramento em background
-    _databaseService.startDriverLocationTracking();
-  }
+    // Enviar localização atualizada para o Firebase
+    _databaseService.updateDriverLocation(
+      position.latitude, 
+      position.longitude
+    );
+    
+    // Atualizar posição no serviço de monitoramento de corridas
+    if (_isOnline) {
+      _rideListenerService.updateCurrentPosition(position);
+    }
+    
+    // Atualizar câmera do mapa
+    _updateCameraPosition(position);
+  });
+  
+  // Iniciar também o serviço para monitoramento em background
+  _databaseService.startDriverLocationTracking();
+}
   
   void _stopLocationTracking() {
     _positionStream?.cancel();
@@ -325,12 +557,14 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
     );
   }
   
+  // Método _showRideRequestDemo() atualizado:
   void _showRideRequestDemo() {
     // Para demonstração, fingimos receber uma solicitação de corrida
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => RideRequestScreen(
+          rideId: 'demo-ride-${DateTime.now().millisecondsSinceEpoch}',
           passengerId: 'user123',
           passengerName: 'Maria Silva',
           passengerRating: 4.7,
@@ -339,6 +573,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
           estimatedDistance: 5.2,
           estimatedDuration: 15,
           estimatedFare: 18.50,
+          distanceToPickup: 1.5,
           onAccept: () {
             // Lógica para aceitar corrida
             Navigator.pop(context);
@@ -470,23 +705,34 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'Olá, Motorista!',
+                        'Olá, ${_driverName}!',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      Row(
-                        children: [
-                          Icon(Icons.star, color: Colors.amber, size: 20),
-                          SizedBox(width: 4),
-                          Text(
-                            _rating.toString(),
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                            ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 35),
+                        child: Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                        ],
+                          child: Row(
+                            children: [
+                              Icon(Icons.star, color: Colors.amber, size: 20),
+                              SizedBox(width: 4),
+                              Text(
+                                _rating.toStringAsFixed(1),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.amber.shade800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -574,7 +820,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
           
           // Menu lateral
           Positioned(
-            top: 130,
+            top: 250,
             left: 16,
             child: Column(
               children: [

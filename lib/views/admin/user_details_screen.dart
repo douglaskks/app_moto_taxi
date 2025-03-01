@@ -152,84 +152,86 @@ class UserDetailsScreen extends StatelessWidget {
   }
   
   Widget _buildStatusSection(BuildContext context, UserDetails user) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Status',
-              style: Theme.of(context).textTheme.titleMedium,
+  return Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Status',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            decoration: const InputDecoration(
+              labelText: 'Status do Usuário',
+              border: OutlineInputBorder(),
             ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(
-                labelText: 'Status do Usuário',
-                border: OutlineInputBorder(),
+            value: user.status != null && ['active', 'suspended', 'blocked'].contains(user.status) 
+                ? user.status 
+                : 'active', // Adiciona um valor padrão se o status for inválido
+            items: const [
+              DropdownMenuItem(
+                value: 'active',
+                child: Text('Ativo'),
               ),
-              value: user.status,
-              items: const [
-                DropdownMenuItem(
-                  value: 'active',
-                  child: Text('Ativo'),
+              DropdownMenuItem(
+                value: 'suspended',
+                child: Text('Suspenso'),
+              ),
+              DropdownMenuItem(
+                value: 'blocked',
+                child: Text('Bloqueado'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value != null) {
+                context.read<UserDetailsBloc>().add(UpdateUserStatus(value));
+              }
+            },
+          ),
+          if (user.status == 'suspended' || user.status == 'blocked')
+            Padding(
+              padding: const EdgeInsets.only(top: 16.0),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: user.status == 'suspended'
+                      ? Colors.orange[50]
+                      : Colors.red[50],
+                  borderRadius: BorderRadius.circular(4),
                 ),
-                DropdownMenuItem(
-                  value: 'suspended',
-                  child: Text('Suspenso'),
-                ),
-                DropdownMenuItem(
-                  value: 'blocked',
-                  child: Text('Bloqueado'),
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  context.read<UserDetailsBloc>().add(UpdateUserStatus(value));
-                }
-              },
-            ),
-            if (user.status == 'suspended' || user.status == 'blocked')
-              Padding(
-                padding: const EdgeInsets.only(top: 16.0),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: user.status == 'suspended'
-                        ? Colors.orange[50]
-                        : Colors.red[50],
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.warning,
-                        color: user.status == 'suspended'
-                            ? Colors.orange
-                            : Colors.red,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          user.status == 'suspended'
-                              ? 'Este usuário está temporariamente suspenso. Ele não poderá usar o aplicativo até que seja reativado.'
-                              : 'Este usuário está bloqueado. Ele não poderá usar o aplicativo até que seja desbloqueado.',
-                          style: TextStyle(
-                            color: user.status == 'suspended'
-                                ? Colors.orange[800]
-                                : Colors.red[800],
-                          ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning,
+                      color: user.status == 'suspended'
+                          ? Colors.orange
+                          : Colors.red,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        user.status == 'suspended'
+                            ? 'Este usuário está temporariamente suspenso. Ele não poderá usar o aplicativo até que seja reativado.'
+                            : 'Este usuário está bloqueado. Ele não poderá usar o aplicativo até que seja desbloqueado.',
+                        style: TextStyle(
+                          color: user.status == 'suspended'
+                              ? Colors.orange[800]
+                              : Colors.red[800],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
   
   Widget _buildStatsSection(BuildContext context, UserStats stats) {
     return Card(

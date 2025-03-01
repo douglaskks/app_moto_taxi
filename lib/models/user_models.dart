@@ -1,4 +1,6 @@
 // lib/models/user_model.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class UserModel {
   final String id;
   final String name;
@@ -28,18 +30,19 @@ class UserModel {
   bool get isPassenger => userType == 'passenger';
   
   factory UserModel.fromJson(Map<String, dynamic> json) {
-    return UserModel(
-      id: json['id'] ?? '',
-      name: json['name'] ?? '',
-      email: json['email'] ?? '',
-      userType: json['userType'] ?? 'passenger',
-      phoneNumber: json['phoneNumber'],
-      profileImage: json['profileImage'],
-      createdAt: json['createdAt'] is DateTime 
-        ? json['createdAt'] 
-        : DateTime.parse(json['createdAt'].toString()),
-    );
-  }
+  return UserModel(
+    id: json['id'] ?? '',
+    name: json['name'] ?? '',
+    email: json['email'] ?? '',
+    userType: json['userType'] ?? 'passenger',
+    phoneNumber: json['phoneNumber'],
+    profileImage: json['profileImage'],
+    createdAt: json['createdAt'] is Timestamp 
+      ? (json['createdAt'] as Timestamp).toDate()
+      : DateTime.parse(json['createdAt'].toString()),
+  );
+}
+
   
   Map<String, dynamic> toJson() {
     return {

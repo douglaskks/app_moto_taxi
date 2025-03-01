@@ -1,39 +1,52 @@
-// Arquivo: lib/core/services/location_service.dart
+// lib/core/services/location_service.dart
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:flutter_polyline_points/flutter_polyline_points.dart';
+import 'package:geocoding/geocoding.dart';
 import 'dart:math';
 
-class RouteInfo {
-  final double distance; // em km
-  final double duration; // em minutos
-  final double estimatedPrice; // em reais
-  final List<LatLng> polylinePoints;
-
-  RouteInfo({
-    required this.distance,
-    required this.duration,
-    required this.estimatedPrice,
-    required this.polylinePoints,
-  });
-}
-
 class LocationService {
-  // Verificar permissão de localização
+  // Lista de bairros conhecidos em Lajedo
+  final List<String> _knownNeighborhoods = [
+    'Centro',
+    'Planalto',
+    'Bia Cosme',
+    'Socorro',
+    'Bairro Novo',
+    'Multirão',
+    'Cohab',
+    'Vila Nova',
+    'Santo Antônio',
+    'São José',
+  ];
+
+  // Cidades próximas de interesse
+  final List<String> _nearbyTowns = [
+    'Lajedo',
+    'Cortês',
+    'Águas Belas',
+    'Garanhuns',
+    'São Bento do Una',
+    'Capoeiras',
+    'Belo Jardim',
+  ];
+
+  // Coordenadas de referência para Lajedo
+  static const LatLng LAJEDO_CENTER = LatLng(-8.7891, -36.2448);
+
+  // Verifica se a permissão de localização está concedida
   Future<bool> checkLocationPermission() async {
     bool serviceEnabled;
     LocationPermission permission;
 
-    // Verificar se os serviços de localização estão habilitados
+    // Verifica se os serviços de localização estão habilitados
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       return false;
     }
 
-    // Verificar a permissão de localização
+    // Verifica a permissão de localização
     permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied || 
+    if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
       return false;
     }
@@ -41,392 +54,209 @@ class LocationService {
     return true;
   }
 
-  // Solicitar permissão de localização
+  // Solicita permissão de localização
   Future<bool> requestLocationPermission() async {
     LocationPermission permission;
 
-    // Verificar os serviços de localização
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      // Poderia mostrar um diálogo solicitando ao usuário para habilitar os serviços
+    // Solicita permissão
+    permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
       return false;
     }
 
-    // Solicitar permissão
-    permission = await Geolocator.requestPermission();
-    return permission == LocationPermission.always || 
-           permission == LocationPermission.whileInUse;
+    return true;
   }
 
-  // Obter localização atual
+  // Obtém a localização atual do usuário
   Future<Position> getCurrentLocation() async {
-    return await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high
-    );
+    try {
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 15),
+      );
+    } catch (e) {
+      print('Erro ao obter localização: $e');
+      // Tentar com precisão reduzida como fallback
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+      );
+    }
   }
 
-  // Obter endereço a partir de coordenadas
+  // Configura o stream de atualizações de localização
+  Stream<Position> getLocationUpdates() {
+    const LocationSettings locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10, // Atualiza a cada 10 metros de movimento
+    );
+    
+    return Geolocator.getPositionStream(locationSettings: locationSettings);
+  }
+
+  // Obtém o endereço a partir de coordenadas
   Future<String> getAddressFromCoordinates(double latitude, double longitude) async {
     try {
       List<Placemark> placemarks = await placemarkFromCoordinates(latitude, longitude);
       
       if (placemarks.isNotEmpty) {
         Placemark place = placemarks[0];
-        return '${place.street}, ${place.subLocality}, ${place.locality}, ${place.administrativeArea}';
+        // Personalizar para adicionar contexto de Lajedo
+        return '${place.thoroughfare ?? ''}, ${place.subLocality ?? ''}, Lajedo - PE';
       }
-      return "Endereço não encontrado";
+      
+      return 'Endereço em Lajedo';
     } catch (e) {
-      return "Erro ao buscar endereço";
+      print('Erro ao obter endereço: $e');
+      return 'Endereço em Lajedo';
     }
   }
 
-  // Obter coordenadas a partir de endereço
+  // Obtém coordenadas a partir de um endereço
   Future<LatLng> getCoordinatesFromAddress(String address) async {
     try {
-      List<Location> locations = await locationFromAddress(address);
+      // Melhorar o contexto do endereço para Lajedo
+      String enhancedAddress = _enhanceAddressContext(address);
+      
+      List<Location> locations = await locationFromAddress(enhancedAddress);
       
       if (locations.isNotEmpty) {
-        return LatLng(locations[0].latitude, locations[0].longitude);
+        Location location = locations[0];
+        
+        // Validar se está próximo de Lajedo (raio de 20 km)
+        if (_isWithinLajedoRegion(location.latitude, location.longitude)) {
+          return LatLng(location.latitude, location.longitude);
+        } else {
+          throw Exception('Endereço muito distante de Lajedo');
+        }
       }
       
-      // Coordenadas padrão se não encontrar o endereço
-      return LatLng(-8.0476, -34.8770); // Centro de Recife
+      throw Exception('Endereço não encontrado');
     } catch (e) {
-      // Coordenadas padrão em caso de erro
-      return LatLng(-8.0476, -34.8770); // Centro de Recife
+      print('Erro ao obter coordenadas: $e');
+      throw Exception('Não foi possível obter coordenadas para este endereço');
     }
   }
 
-  // Calcular rota, distância, tempo e preço estimado - Versão atualizada
-  // Calcular rota, distância, tempo e preço estimado
-// Calcular rota, distância, tempo e preço estimado
-// Calcular rota, distância, tempo e preço estimado
-// Calcular rota, distância, tempo e preço estimado
-Future<RouteInfo> calculateRoute(
-  double originLat,
-  double originLng,
-  double destLat,
-  double destLng,
-) async {
-  try {
-    // Usar PolylinePoints para obter a rota - formato correto conforme exemplo
-    PolylinePoints polylinePoints = PolylinePoints();
+  // Melhorar o contexto do endereço
+  String _enhanceAddressContext(String address) {
+    // Verificar se já contém referências locais
+    bool containsLocalContext = _knownNeighborhoods.any((neighborhood) => 
+      address.toLowerCase().contains(neighborhood.toLowerCase())) ||
+      _nearbyTowns.any((town) => 
+        address.toLowerCase().contains(town.toLowerCase()));
     
-    PolylineResult result = await polylinePoints.getRouteBetweenCoordinates(
-      googleApiKey: "AIzaSyBgm2hoaSCfPQr_nW_JwDgVXnpR5AwOZEY", // Sua chave de API
-      request: PolylineRequest(
-        origin: PointLatLng(originLat, originLng),
-        destination: PointLatLng(destLat, destLng),
-        mode: TravelMode.driving,
-      ),
-    );
-
-    // Converter pontos da polyline para LatLng
-    List<LatLng> polylineCoordinates = [];
-    if (result.points.isNotEmpty) {
-      for (var point in result.points) {
-        polylineCoordinates.add(LatLng(point.latitude, point.longitude));
-      }
-    } else {
-      // Caso a API não retorne pontos, usar o método alternativo
-      return _createSimpleRoute(originLat, originLng, destLat, destLng);
+    // Se não tiver contexto local, adicionar Lajedo
+    if (!containsLocalContext) {
+      return '$address, Lajedo, Pernambuco, Brasil';
     }
+    
+    return address;
+  }
 
-    // Calcular distância (método simples, a API do Google seria mais precisa)
+  // Verificar se o endereço está próximo de Lajedo
+  bool _isWithinLajedoRegion(double latitude, double longitude) {
+    // Calcular distância do centro de Lajedo
     double distance = _calculateDistance(
-      originLat, originLng, destLat, destLng
+      LAJEDO_CENTER.latitude, 
+      LAJEDO_CENTER.longitude, 
+      latitude, 
+      longitude
     );
     
-    // Estimar duração (assumindo velocidade média de 30 km/h)
-    double durationInMinutes = (distance / 30) * 60;
-    
-    // Calcular preço (R$ 2,00 de bandeirada + R$ 2,50 por km)
-    double estimatedPrice = 2.0 + (distance * 2.5);
-
-    return RouteInfo(
-      distance: distance,
-      duration: durationInMinutes,
-      estimatedPrice: estimatedPrice,
-      polylinePoints: polylineCoordinates,
-    );
-  } catch (e) {
-    print('Erro ao calcular rota: $e');
-    // Em caso de erro, usar o método alternativo
-    return _createSimpleRoute(originLat, originLng, destLat, destLng);
+    // Raio de 20 km para considerar como região de Lajedo
+    return distance <= 20.0;
   }
-}
 
-// Método alternativo que cria uma rota simples sem chamar a API
-Future<RouteInfo> _createSimpleRoute(
-  double originLat, 
-  double originLng,
-  double destLat,
-  double destLng,
-) async {
-  // Cálculo simples sem depender do polyline_points
-  double distance = _calculateDistance(
-    originLat, originLng, destLat, destLng
-  );
-  
-  double durationInMinutes = (distance / 30) * 60;
-  double estimatedPrice = 2.0 + (distance * 2.5);
-  
-  // Criar uma linha reta simples entre os pontos
-  List<LatLng> polylineCoordinates = [
-    LatLng(originLat, originLng),
-    LatLng(destLat, destLng),
-  ];
-  
-  // Adicionar pontos intermediários para suavizar a linha
-  double latDiff = (destLat - originLat) / 4;
-  double lngDiff = (destLng - originLng) / 4;
-  
-  for (int i = 1; i < 4; i++) {
-    polylineCoordinates.insert(i, LatLng(
-      originLat + (latDiff * i),
-      originLng + (lngDiff * i),
-    ));
-  }
-  
-  return RouteInfo(
-    distance: distance,
-    duration: durationInMinutes,
-    estimatedPrice: estimatedPrice,
-    polylinePoints: polylineCoordinates,
-  );
-}
-
-// Método alternativo que cria uma rota simples sem chamar a API
-/*Future<RouteInfo> _createSimpleRoute(
-  double originLat, 
-  double originLng,
-  double destLat,
-  double destLng,
-) async {
-  // Cálculo simples sem depender do polyline_points
-  double distance = _calculateDistance(
-    originLat, originLng, destLat, destLng
-  );
-  
-  double durationInMinutes = (distance / 30) * 60;
-  double estimatedPrice = 2.0 + (distance * 2.5);
-  
-  // Criar uma linha reta simples entre os pontos
-  List<LatLng> polylineCoordinates = [
-    LatLng(originLat, originLng),
-    LatLng(destLat, destLng),
-  ];
-  
-  // Adicionar pontos intermediários para suavizar a linha
-  double latDiff = (destLat - originLat) / 4;
-  double lngDiff = (destLng - originLng) / 4;
-  
-  for (int i = 1; i < 4; i++) {
-    polylineCoordinates.insert(i, LatLng(
-      originLat + (latDiff * i),
-      originLng + (lngDiff * i),
-    ));
-  }
-  
-  return RouteInfo(
-    distance: distance,
-    duration: durationInMinutes,
-    estimatedPrice: estimatedPrice,
-    polylinePoints: polylineCoordinates,
-  );
-}*/
-
-// Método alternativo mais simples que não depende da API (privado para evitar duplicação)
-/*Future<RouteInfo> _calculateRouteFallback(
-  double originLat, 
-  double originLng,
-  double destLat,
-  double destLng,
-) async {
-  try {
-    // Cálculo mais simples sem depender do polyline_points
-    double distance = _calculateDistance(
-      originLat, originLng, destLat, destLng
-    );
-    
-    double durationInMinutes = (distance / 30) * 60;
-    double estimatedPrice = 2.0 + (distance * 2.5);
-    
-    // Criar uma linha reta simples entre os pontos
-    List<LatLng> polylineCoordinates = [
-      LatLng(originLat, originLng),
-      LatLng(destLat, destLng),
-    ];
-    
-    // Adicionar pontos intermediários para suavizar a linha
-    double latDiff = (destLat - originLat) / 4;
-    double lngDiff = (destLng - originLng) / 4;
-    
-    for (int i = 1; i < 4; i++) {
-      polylineCoordinates.insert(i, LatLng(
-        originLat + (latDiff * i),
-        originLng + (lngDiff * i),
-      ));
-    }
-    
-    return RouteInfo(
-      distance: distance,
-      duration: durationInMinutes,
-      estimatedPrice: estimatedPrice,
-      polylinePoints: polylineCoordinates,
-    );
-  } catch (e) {
-    print('Erro no fallback de rota: $e');
-    // Retornar algo muito simples em caso de erro
-    return RouteInfo(
-      distance: 5.0, // 5 km como fallback
-      duration: 15.0, // 15 minutos como fallback
-      estimatedPrice: 15.0, // R$ 15,00 como fallback
-      polylinePoints: [
-        LatLng(originLat, originLng),
-        LatLng(destLat, destLng),
-      ],
-    );
-  }
-}*/
-
-// Método alternativo mais simples que não depende da API
-/*Future<RouteInfo> calculateRouteFallback(
-  double originLat, 
-  double originLng,
-  double destLat,
-  double destLng,
-) async {
-  try {
-    // Cálculo mais simples sem depender do polyline_points
-    double distance = _calculateDistance(
-      originLat, originLng, destLat, destLng
-    );
-    
-    double durationInMinutes = (distance / 30) * 60;
-    double estimatedPrice = 2.0 + (distance * 2.5);
-    
-    // Criar uma linha reta simples entre os pontos
-    List<LatLng> polylineCoordinates = [
-      LatLng(originLat, originLng),
-      LatLng(destLat, destLng),
-    ];
-    
-    // Adicionar pontos intermediários para suavizar a linha
-    double latDiff = (destLat - originLat) / 4;
-    double lngDiff = (destLng - originLng) / 4;
-    
-    for (int i = 1; i < 4; i++) {
-      polylineCoordinates.insert(i, LatLng(
-        originLat + (latDiff * i),
-        originLng + (lngDiff * i),
-      ));
-    }
-    
-    return RouteInfo(
-      distance: distance,
-      duration: durationInMinutes,
-      estimatedPrice: estimatedPrice,
-      polylinePoints: polylineCoordinates,
-    );
-  } catch (e) {
-    print('Erro no fallback de rota: $e');
-    // Retornar algo muito simples em caso de erro
-    return RouteInfo(
-      distance: 5.0, // 5 km como fallback
-      duration: 15.0, // 15 minutos como fallback
-      estimatedPrice: 15.0, // R$ 15,00 como fallback
-      polylinePoints: [
-        LatLng(originLat, originLng),
-        LatLng(destLat, destLng),
-      ],
-    );
-  }
-}
-
-  // Método alternativo mais simples caso você continue tendo problemas
-  Future<RouteInfo> calculateRouteFallback(
-    double originLat, 
-    double originLng,
-    double destLat,
-    double destLng,
+  // Calcula a rota entre dois pontos (simulação simples)
+  Future<RouteInfo> calculateRoute(
+    double startLat, 
+    double startLng, 
+    double endLat, 
+    double endLng
   ) async {
     try {
-      // Cálculo mais simples sem depender do polyline_points
-      double distance = _calculateDistance(
-        originLat, originLng, destLat, destLng
-      );
-      
-      double durationInMinutes = (distance / 30) * 60;
-      double estimatedPrice = 2.0 + (distance * 2.5);
-      
-      // Criar uma linha reta simples entre os pontos
-      List<LatLng> polylineCoordinates = [
-        LatLng(originLat, originLng),
-        LatLng(destLat, destLng),
-      ];
-      
-      // Opcionalmente, você pode adicionar pontos intermediários para suavizar a linha
-      // Isso é um método simples que não usa a API do Google
-      double latDiff = (destLat - originLat) / 4;
-      double lngDiff = (destLng - originLng) / 4;
-      
-      for (int i = 1; i < 4; i++) {
-        polylineCoordinates.insert(i, LatLng(
-          originLat + (latDiff * i),
-          originLng + (lngDiff * i),
-        ));
+      // Validar se pontos estão na região de Lajedo
+      if (!_isWithinLajedoRegion(startLat, startLng) || 
+          !_isWithinLajedoRegion(endLat, endLng)) {
+        throw Exception('Rota fora da região de Lajedo');
       }
       
+      // Resto do método permanece igual ao original
+      final int steps = 10; // Número de pontos intermediários
+      List<LatLng> points = [];
+      
+      for (int i = 0; i <= steps; i++) {
+        double fraction = i / steps;
+        double lat = startLat + (endLat - startLat) * fraction;
+        double lng = startLng + (endLng - startLng) * fraction;
+        
+        // Adicionar um pequeno ruído para simular uma rota real
+        if (i > 0 && i < steps) {
+          lat += (Random().nextDouble() - 0.5) * 0.001;
+          lng += (Random().nextDouble() - 0.5) * 0.001;
+        }
+        
+        points.add(LatLng(lat, lng));
+      }
+      
+      // Calcular distância aproximada em quilômetros usando a fórmula de Haversine
+      double distance = _calculateDistance(startLat, startLng, endLat, endLng);
+      
+      // Estimar duração (assumindo velocidade média de 30 km/h)
+      double durationMinutes = (distance / 30) * 60;
+      
+      // Estimar preço (taxa base + preço por km)
+      double basePrice = 5.0; // R$ 5,00 de taxa base
+      double pricePerKm = 2.0; // R$ 2,00 por km
+      double estimatedPrice = basePrice + (distance * pricePerKm);
+      
       return RouteInfo(
+        polylinePoints: points,
         distance: distance,
-        duration: durationInMinutes,
+        duration: durationMinutes,
         estimatedPrice: estimatedPrice,
-        polylinePoints: polylineCoordinates,
       );
     } catch (e) {
-      print('Erro no fallback de rota: $e');
-      // Retornar algo muito simples em caso de erro
-      return RouteInfo(
-        distance: 5.0, // 5 km como fallback
-        duration: 15.0, // 15 minutos como fallback
-        estimatedPrice: 15.0, // R$ 15,00 como fallback
-        polylinePoints: [
-          LatLng(originLat, originLng),
-          LatLng(destLat, destLng),
-        ],
-      );
+      print('Erro ao calcular rota: $e');
+      throw Exception('Não foi possível calcular a rota');
     }
-  }*/
-
-  // Cálculo simplificado de distância usando a fórmula de Haversine
+  }
+  
+  // Calcula a distância entre dois pontos em km usando a fórmula de Haversine
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-    const double earthRadius = 6371; // km
+    const int earthRadius = 6371; // Raio da Terra em km
     
+    // Converter graus para radianos
     double dLat = _degreesToRadians(lat2 - lat1);
     double dLon = _degreesToRadians(lon2 - lon1);
     
-    double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_degreesToRadians(lat1)) * cos(_degreesToRadians(lat2)) *
-        sin(dLon / 2) * sin(dLon / 2);
-        
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    // Fórmula de Haversine
+    double a = sin(dLat/2) * sin(dLat/2) +
+               cos(_degreesToRadians(lat1)) * cos(_degreesToRadians(lat2)) *
+               sin(dLon/2) * sin(dLon/2);
+    double c = 2 * atan2(sqrt(a), sqrt(1-a));
     double distance = earthRadius * c;
     
     return distance;
   }
-
+  
+  // Converte graus para radianos
   double _degreesToRadians(double degrees) {
     return degrees * (pi / 180);
   }
-  
-  // Monitorar mudanças de localização em tempo real
-  Stream<Position> getLocationUpdates() {
-    return Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10, // atualizar a cada 10 metros
-      ),
-    );
-  }
+}
+
+class RouteInfo {
+  final List<LatLng> polylinePoints;
+  final double distance;
+  final double duration;
+  final double estimatedPrice;
+
+  RouteInfo({
+    required this.polylinePoints,
+    required this.distance,
+    required this.duration,
+    required this.estimatedPrice,
+  });
 }

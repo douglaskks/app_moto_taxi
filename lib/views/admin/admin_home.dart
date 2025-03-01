@@ -2,6 +2,10 @@
 import 'package:app_moto_taxe/controllers/bloc/auth/auth_bloc.dart';
 import 'package:app_moto_taxe/controllers/bloc/auth/auth_event.dart';
 import 'package:app_moto_taxe/routes.dart';
+import 'package:app_moto_taxe/views/admin/driver_management_screen.dart';
+import 'package:app_moto_taxe/views/admin/ride_management_screen.dart';
+import 'package:app_moto_taxe/views/admin/settings_screen.dart';
+import 'package:app_moto_taxe/views/admin/user_management_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -36,7 +40,7 @@ class AdminHome extends StatelessWidget with AdminRouteMixin{
               icon: Icons.people,
               title: 'Usuários',
               onTap: () {
-                // Navegar para gerenciamento de usuários
+                Navigator.push(context, MaterialPageRoute(builder: (context) => UserManagementScreen(),));
               },
             ),
             _buildDashboardItem(
@@ -44,7 +48,7 @@ class AdminHome extends StatelessWidget with AdminRouteMixin{
               icon: Icons.motorcycle,
               title: 'Motoristas',
               onTap: () {
-                // Navegar para gerenciamento de motoristas
+                Navigator.push(context, MaterialPageRoute(builder: (context) => DriverManagementScreen(),));
               },
             ),
             _buildDashboardItem(
@@ -52,7 +56,7 @@ class AdminHome extends StatelessWidget with AdminRouteMixin{
               icon: Icons.map,
               title: 'Corridas',
               onTap: () {
-                // Navegar para visualização de corridas
+                Navigator.push(context, MaterialPageRoute(builder: (context) => RideManagementScreen(),));
               },
             ),
             _buildDashboardItem(
@@ -60,7 +64,7 @@ class AdminHome extends StatelessWidget with AdminRouteMixin{
               icon: Icons.settings,
               title: 'Configurações',
               onTap: () {
-                // Navegar para configurações do aplicativo
+                Navigator.push(context, MaterialPageRoute(builder: (context) => SettingsScreen(),));
               },
             ),
           ],

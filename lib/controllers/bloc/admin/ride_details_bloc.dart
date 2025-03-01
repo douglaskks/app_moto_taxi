@@ -46,6 +46,15 @@ class RideDetailsLoaded extends RideDetailsState {
   List<Object?> get props => [ride];
 }
 
+class RideDetailsCancelled extends RideDetailsState {
+  final RideDetailsFull ride;
+  
+  RideDetailsCancelled(this.ride);
+  
+  @override
+  List<Object?> get props => [ride];
+}
+
 class RideDetailsError extends RideDetailsState {
   final String message;
   
@@ -88,9 +97,10 @@ class RideDetailsBloc extends Bloc<RideDetailsEvent, RideDetailsState> {
     final currentState = state;
     if (currentState is RideDetailsLoaded) {
       try {
-        await _adminService.cancelRide(_rideId!, event.reason);
+        await _adminService.cancelRide(_rideId!, reason: event.reason);
         // Recarregar os detalhes após o cancelamento
-        add(LoadRideDetails(_rideId!));
+        final updatedRide = await _adminService.getRideDetails(_rideId!);
+        emit(RideDetailsCancelled(updatedRide));
       } catch (e) {
         emit(RideDetailsError(e.toString()));
       }

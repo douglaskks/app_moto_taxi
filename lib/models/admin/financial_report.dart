@@ -1,4 +1,12 @@
-// lib/models/admin/financial_report.dart
+import 'package:intl/intl.dart';
+
+class DailyRevenue {
+  final DateTime date;
+  final double amount;
+
+  DailyRevenue({required this.date, required this.amount});
+}
+
 class FinancialReport {
   final double totalRevenue;
   final double platformFees;
@@ -6,6 +14,29 @@ class FinancialReport {
   final List<FinancialTransaction> transactions;
   final DateTime startDate;
   final DateTime endDate;
+  
+  // Getter para receitas diárias
+  List<DailyRevenue> get dailyRevenues {
+    // Agrupa transações de crédito por dia
+    final Map<String, double> dailyRevenueMap = {};
+    
+    for (var transaction in transactions) {
+      if (transaction.type == 'credit') {
+        final dateKey = DateFormat('yyyy-MM-dd').format(transaction.date);
+        dailyRevenueMap[dateKey] = 
+          (dailyRevenueMap[dateKey] ?? 0) + transaction.amount;
+      }
+    }
+    
+    return dailyRevenueMap.entries.map((entry) {
+      return DailyRevenue(
+        date: DateTime.parse(entry.key),
+        amount: entry.value
+      );
+    }).toList()
+    // Ordena por data para manter a consistência
+    ..sort((a, b) => a.date.compareTo(b.date));
+  }
   
   FinancialReport({
     required this.totalRevenue,

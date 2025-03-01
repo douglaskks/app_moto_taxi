@@ -1,4 +1,6 @@
 // lib/controllers/bloc/admin/settings_bloc.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../../core/services/admin/admin_service.dart';
@@ -59,17 +61,35 @@ class SettingsBloc extends Bloc<SettingsEvent, SettingsState> {
   }
   
   Future<void> _onLoadSettings(
-    LoadSettings event,
-    Emitter<SettingsState> emit,
-  ) async {
-    emit(SettingsLoading());
-    try {
-      final settings = await _adminService.getAppSettings();
-      emit(SettingsLoaded(settings));
-    } catch (e) {
-      emit(SettingsError(e.toString()));
+  LoadSettings event,
+  Emitter<SettingsState> emit,
+) async {
+  emit(SettingsLoading());
+  try {
+    // Obter usuário atual
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw Exception('Usuário não autenticado');
     }
+
+    // Log de depuração
+    print('User ID: ${user.uid}');
+
+    // Buscar documento do usuário
+    final userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    print('User Role: ${userDoc.data()?['role']}');
+
+    final settings = await _adminService.getAppSettings();
+    emit(SettingsLoaded(settings));
+  } catch (e) {
+    print('Erro ao carregar configurações: $e');
+    emit(SettingsError(e.toString()));
   }
+}
   
   Future<void> _onSaveSettings(
     SaveSettings event,
