@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -63,6 +64,11 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Configurar a barra de status com a mesma cor do app
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+      statusBarColor: Colors.blue[800], // Mesma cor do app bar
+      statusBarIconBrightness: Brightness.light,
+    ));
     _checkLocationPermission();
     _loadDriverData();
   }
@@ -828,12 +834,14 @@ void _handleRideAccepted(String rideId) async {
                   Icons.account_circle,
                   'Perfil',
                   _navigateToProfile,
+                  Colors.blue[800], // Modificado para usar azul[800]
                 ),
                 SizedBox(height: 16),
                 _buildMenuButton(
                   Icons.bar_chart,
                   'Ganhos',
                   _navigateToEarnings,
+                  Colors.blue[800], // Modificado para usar azul[800]
                 ),
                 SizedBox(height: 16),
                 _buildMenuButton(

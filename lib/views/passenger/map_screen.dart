@@ -1,12 +1,14 @@
 // Arquivo: lib/views/passenger/map_screen.dart
 
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:app_moto_taxe/core/utils/ride_test_helper.dart';
 import 'package:app_moto_taxe/views/chat/chat_screen.dart';
 import 'package:app_moto_taxe/views/passenger/rate_driver_screen.dart';
 import 'package:app_moto_taxe/views/payment/payment_confirmation_screen.dart';
 import 'package:app_moto_taxe/views/shared/chat_icon_badge.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_google_maps_webservices/places.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -70,6 +72,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   String _rideId = "ride-test-123";
 
   Timer? _debounce;
+
+  Marker? _driverMarker;
+  LatLng? _previousDriverPosition;
+  BitmapDescriptor? _driverIcon;
+  StreamSubscription<DocumentSnapshot>? _driverLocationSubscription;
   
   // Informações de rota
   double _estimatedDistance = 0.0;
@@ -112,10 +119,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     
     // Inicializar o mapa com a localização atual usando o método do código menor
     _determinePosition();
+    _loadCustomMarkerIcons();
   }
   
  @override
   void dispose() {
+    _driverLocationSubscription?.cancel();
     _debounce?.cancel();
     _animationController.dispose();
     _destinationController.dispose();
@@ -207,6 +216,96 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _loadCustomMarkerIcons() async {
+    _driverIcon = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(devicePixelRatio: 2.5),
+      'lib/assets/images/motorcycle_marker.png',
+    );
+  }
+
+  // Iniciar rastreamento do motorista quando a corrida for aceita
+void _startDriverTracking(String driverId) {
+  _driverLocationSubscription?.cancel();
+  
+  _driverLocationSubscription = FirebaseFirestore.instance
+      .collection('drivers')
+      .doc(driverId)
+      .snapshots()
+      .listen((snapshot) {
+    if (snapshot.exists && mounted) {
+      final data = snapshot.data() as Map<String, dynamic>;
+      if (data.containsKey('latitude') && data.containsKey('longitude')) {
+        final lat = data['latitude'] as double;
+        final lng = data['longitude'] as double;
+        final newPosition = LatLng(lat, lng);
+        
+        _animateDriverMovement(newPosition);
+      }
+    }
+  });
+}
+
+// Animar movimento do motorista
+void _animateDriverMovement(LatLng newPosition) {
+  if (!mounted) return;
+  
+  // Calcular rotação (direção) se tiver posição anterior
+  double rotation = 0.0;
+  if (_previousDriverPosition != null) {
+    rotation = _calculateBearing(
+      _previousDriverPosition!.latitude,
+      _previousDriverPosition!.longitude,
+      newPosition.latitude,
+      newPosition.longitude
+    );
+  }
+  
+  setState(() {
+    _markers.removeWhere((marker) => marker.markerId.value == 'driver');
+    _markers.add(
+      Marker(
+        markerId: const MarkerId('driver'),
+        position: newPosition,
+        rotation: rotation,
+        icon: _driverIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+        infoWindow: const InfoWindow(title: 'Seu motorista'),
+      ),
+    );
+  });
+  
+  // Se estiver em uma corrida ativa, focar o mapa no motorista
+  if (_rideAccepted && mapController != null) {
+    mapController!.animateCamera(
+      CameraUpdate.newLatLngZoom(newPosition, 16),
+    );
+  }
+  
+  _previousDriverPosition = newPosition;
+}
+
+// Calcular o ângulo (bearing) entre duas coordenadas
+double _calculateBearing(double startLat, double startLng, double endLat, double endLng) {
+  double toRadians(double degree) {
+    return degree * (pi / 180.0);
+  }
+  
+  double toDegrees(double radian) {
+    return radian * (180.0 / pi);
+  }
+  
+  final startLatRad = toRadians(startLat);
+  final startLngRad = toRadians(startLng);
+  final endLatRad = toRadians(endLat);
+  final endLngRad = toRadians(endLng);
+  
+  double y = sin(endLngRad - startLngRad) * cos(endLatRad);
+  double x = cos(startLatRad) * sin(endLatRad) -
+      sin(startLatRad) * cos(endLatRad) * cos(endLngRad - startLngRad);
+  double bearing = toDegrees(atan2(y, x));
+  
+  return (bearing + 360) % 360;
+}
+
   void _showPaymentMethodDialog() {
   showDialog(
     context: context,
@@ -216,7 +315,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         mainAxisSize: MainAxisSize.min,
         children: [
           RadioListTile<String>(
-            title: Row(
+            title: const Row(
               children: [
                 Icon(Icons.money, color: Colors.green),
                 SizedBox(width: 10),
@@ -233,7 +332,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             },
           ),
           RadioListTile<String>(
-            title: Row(
+            title: const Row(
               children: [
                 Icon(Icons.credit_card, color: Colors.blue),
                 SizedBox(width: 10),
@@ -250,7 +349,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             },
           ),
           RadioListTile<String>(
-            title: Row(
+            title: const Row(
               children: [
                 Icon(Icons.pix, color: Colors.purple),
                 SizedBox(width: 10),
@@ -830,7 +929,7 @@ Widget build(BuildContext context) {
                         backgroundColor: Colors.white,
                         radius: 24,
                         child: IconButton(
-                          icon: Icon(Icons.arrow_back, color: Colors.black),
+                          icon: const Icon(Icons.arrow_back, color: Colors.black),
                           onPressed: () {
                             Navigator.of(context).pop();
                           },
@@ -845,7 +944,7 @@ Widget build(BuildContext context) {
                             backgroundColor: Colors.white,
                             radius: 24,
                             child: IconButton(
-                              icon: Icon(Icons.my_location, color: Colors.blue),
+                              icon: const Icon(Icons.my_location, color: Colors.blue),
                               onPressed: () {
                                 if (_currentPosition != null) {
                                   _moveToCurrentLocation();
@@ -855,7 +954,7 @@ Widget build(BuildContext context) {
                               },
                             ),
                           ),
-                          SizedBox(height: 8),
+                          const SizedBox(height: 8),
                           // Botão para alternar modo claro/escuro
                           CircleAvatar(
                             backgroundColor: Colors.white,
@@ -954,9 +1053,9 @@ void _addToRecentAddresses(String name, String address) {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-          Text(
+          const Text(
             "Para onde vamos?",
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.bold,
             ),
@@ -1258,7 +1357,7 @@ void _loadRecentAddresses() async {
         onTap: () => _setDestination(address),
         borderRadius: BorderRadius.circular(16),
         child: Ink(
-          padding: EdgeInsets.symmetric(vertical: 16),
+          padding: const EdgeInsets.symmetric(vertical: 16),
           decoration: BoxDecoration(
             color: color.withOpacity(0.1),
             borderRadius: BorderRadius.circular(16),
@@ -1267,7 +1366,7 @@ void _loadRecentAddresses() async {
           child: Column(
             children: [
               Icon(icon, color: color, size: 24),
-              SizedBox(height: 8),
+              const SizedBox(height: 8),
               Text(
                 title,
                 style: TextStyle(
@@ -1292,11 +1391,11 @@ void _loadRecentAddresses() async {
           color: Colors.grey[200],
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Icon(Icons.location_on, color: Colors.blue),
+        child: const Icon(Icons.location_on, color: Colors.blue),
       ),
       title: Text(
         name,
-        style: TextStyle(fontWeight: FontWeight.w500),
+        style: const TextStyle(fontWeight: FontWeight.w500),
       ),
       subtitle: Text(
         address,
@@ -1307,7 +1406,7 @@ void _loadRecentAddresses() async {
         _destinationController.text = address;
         _setDestination(address);
       },
-      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
     );
   }
       // Card para confirmar corrida aprimorado (continuação)
@@ -1315,7 +1414,7 @@ void _loadRecentAddresses() async {
     return Card(
       margin: EdgeInsets.zero,
       elevation: 8,
-      shape: RoundedRectangleBorder(
+      shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(24),
           topRight: Radius.circular(24),
@@ -1330,23 +1429,23 @@ void _loadRecentAddresses() async {
             Container(
               width: 40,
               height: 4,
-              margin: EdgeInsets.only(bottom: 16),
+              margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
                 color: Colors.grey[300],
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            Text(
+            const Text(
               "Confirmar Corrida",
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             // Card de rota aprimorado
             Container(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(16),
@@ -1363,13 +1462,13 @@ void _loadRecentAddresses() async {
                           color: Colors.blue.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Icon(Icons.my_location, color: Colors.blue),
+                        child: const Icon(Icons.my_location, color: Colors.blue),
                       ),
-                      SizedBox(width: 12),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           _pickupAddress,
-                          style: TextStyle(fontSize: 16),
+                          style: const TextStyle(fontSize: 16),
                         ),
                       ),
                     ],
@@ -1384,13 +1483,14 @@ void _loadRecentAddresses() async {
                           width: 2,
                           child: LayoutBuilder(builder: (context, constraints) {
                             return Flex(
+                              // ignore: sort_child_properties_last
                               children: List.generate(
                                 (constraints.maxHeight / 5).floor(),
                                 (index) => Container(
                                   height: 2,
                                   width: 2,
                                   color: Colors.grey,
-                                  margin: EdgeInsets.symmetric(vertical: 1),
+                                  margin: const EdgeInsets.symmetric(vertical: 1),
                                 ),
                               ),
                               direction: Axis.vertical,
@@ -1411,17 +1511,17 @@ void _loadRecentAddresses() async {
                           color: Colors.red.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Icon(Icons.location_on, color: Colors.red),
+                        child: const Icon(Icons.location_on, color: Colors.red),
                       ),
-                      SizedBox(width: 12),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           _destinationAddress,
-                          style: TextStyle(fontSize: 16),
+                          style: const TextStyle(fontSize: 16),
                         ),
                       ),
                       IconButton(
-                        icon: Icon(Icons.edit, size: 20),
+                        icon: const Icon(Icons.edit, size: 20),
                         onPressed: () {
                           setState(() {
                             _hasDestination = false;
@@ -1434,7 +1534,7 @@ void _loadRecentAddresses() async {
                 ],
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             // Informações da corrida aprimoradas
             Container(
               padding: EdgeInsets.all(16),
@@ -1475,7 +1575,7 @@ void _loadRecentAddresses() async {
               onTap: _showPaymentMethodDialog,
               borderRadius: BorderRadius.circular(16),
               child: Ink(
-                padding: EdgeInsets.all(16),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(16),
@@ -1506,7 +1606,7 @@ void _loadRecentAddresses() async {
                                 : Colors.purple,
                       ),
                     ),
-                    SizedBox(width: 16),
+                    const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1520,7 +1620,7 @@ void _loadRecentAddresses() async {
                           ),
                           Text(
                             _selectedPaymentMethod,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 16,
                             ),
@@ -1528,29 +1628,29 @@ void _loadRecentAddresses() async {
                         ],
                       ),
                     ),
-                    Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                    const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
                   ],
                 ),
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             // Botão de solicitar aprimorado - MODIFICADO para usar o BLoC
             ElevatedButton(
               onPressed: () {
                 // Chamar o método que dispara o evento do BLoC
                 _requestRide();
               },
-              child: Text(
-                "Solicitar MotoApp",
-                style: TextStyle(fontSize: 18, color: Colors.white),
-              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue[800],
-                minimumSize: Size(double.infinity, 56),
+                minimumSize: const Size(double.infinity, 56),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
                 elevation: 3,
+              ),
+              child: const Text(
+                "Solicitar MotoApp",
+                style: TextStyle(fontSize: 18, color: Colors.white),
               ),
             ),
           ],
@@ -1597,7 +1697,7 @@ Widget _buildSearchingDriverCard() {
   return Card(
     margin: EdgeInsets.zero,
     elevation: 8,
-    shape: RoundedRectangleBorder(
+    shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.only(
         topLeft: Radius.circular(24),
         topRight: Radius.circular(24),
@@ -1612,7 +1712,7 @@ Widget _buildSearchingDriverCard() {
           Container(
             width: 40,
             height: 4,
-            margin: EdgeInsets.only(bottom: 16),
+            margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
               color: Colors.grey[300],
               borderRadius: BorderRadius.circular(2),
@@ -1650,15 +1750,15 @@ Widget _buildSearchingDriverCard() {
               );
             },
           ),
-          SizedBox(height: 20),
-          Text(
+          const SizedBox(height: 20),
+          const Text(
             "Procurando motorista...",
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.bold,
             ),
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Text(
             "Estamos buscando o motorista mais próximo de você",
             textAlign: TextAlign.center,
@@ -1667,18 +1767,18 @@ Widget _buildSearchingDriverCard() {
               color: Colors.grey[600],
             ),
           ),
-          SizedBox(height: 24),
+          const SizedBox(height: 24),
           // Informações da rota
           Container(
-            padding: EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.grey[100],
               borderRadius: BorderRadius.circular(16),
             ),
             child: Row(
               children: [
-                Icon(Icons.location_on, color: Colors.red),
-                SizedBox(width: 12),
+                const Icon(Icons.location_on, color: Colors.red),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1692,7 +1792,7 @@ Widget _buildSearchingDriverCard() {
                       ),
                       Text(
                         _destinationAddress,
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -1702,19 +1802,12 @@ Widget _buildSearchingDriverCard() {
               ],
             ),
           ),
-          SizedBox(height: 24),
+          const SizedBox(height: 24),
           // Botão de cancelar aprimorado - MODIFICADO para usar o BLoC
           OutlinedButton(
             onPressed: () {
               _showCancellationDialog();
             },
-            child: Text(
-              "Cancelar",
-              style: TextStyle(
-                fontSize: 18,
-                color: Colors.red[700],
-              ),
-            ),
             style: OutlinedButton.styleFrom(
               side: BorderSide(color: Colors.red[300]!),
               minimumSize: Size(double.infinity, 56),
@@ -1722,10 +1815,17 @@ Widget _buildSearchingDriverCard() {
                 borderRadius: BorderRadius.circular(16),
               ),
             ),
+            child: Text(
+              "Cancelar",
+              style: TextStyle(
+                fontSize: 18,
+                color: Colors.red[700],
+              ),
+            ),
           ),
           
           // Adicionar isso para incluir o modo de teste (apenas em ambiente de desenvolvimento)
-          SizedBox(height: 16),
+          const SizedBox(height: 16),
           // Adicionar botão de teste (remover para produção)
           FutureBuilder(
             future: Future.delayed(Duration.zero), // Para acessar o context com segurança
@@ -1748,7 +1848,7 @@ Widget _buildSearchingDriverCard() {
     return Card(
       margin: EdgeInsets.zero,
       elevation: 8,
-      shape: RoundedRectangleBorder(
+      shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(24),
           topRight: Radius.circular(24),
@@ -1763,7 +1863,7 @@ Widget _buildSearchingDriverCard() {
             Container(
               width: 40,
               height: 4,
-              margin: EdgeInsets.only(bottom: 16),
+              margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
                 color: Colors.grey[300],
                 borderRadius: BorderRadius.circular(2),
@@ -1771,7 +1871,7 @@ Widget _buildSearchingDriverCard() {
             ),
             // Informações do motorista
             Container(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.blue.withOpacity(0.05),
                 borderRadius: BorderRadius.circular(16),
@@ -1785,28 +1885,28 @@ Widget _buildSearchingDriverCard() {
                   CircleAvatar(
                     radius: 30,
                     backgroundColor: Colors.grey[300],
-                    child: Icon(
+                    child: const Icon(
                       Icons.person,
                       size: 40,
                       color: Colors.white,
                     ),
                   ),
-                  SizedBox(width: 16),
+                  const SizedBox(width: 16),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           _driverName,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                         Row(
                           children: [
-                            Icon(Icons.star, color: Colors.amber, size: 16),
-                            SizedBox(width: 4),
+                            const Icon(Icons.star, color: Colors.amber, size: 16),
+                            const SizedBox(width: 4),
                             Text(
                               _driverRating,
                               style: TextStyle(
@@ -1826,18 +1926,18 @@ Widget _buildSearchingDriverCard() {
                         radius: 20,
                         backgroundColor: Colors.green.withOpacity(0.1),
                         child: IconButton(
-                          icon: Icon(Icons.phone, color: Colors.green, size: 20),
+                          icon: const Icon(Icons.phone, color: Colors.green, size: 20),
                           onPressed: () {
                             // Ligar para o motorista
                           },
                         ),
                       ),
-                      SizedBox(width: 8),
+                      const SizedBox(width: 8),
                       CircleAvatar(
                         radius: 20,
                         backgroundColor: Colors.blue.withOpacity(0.1),
                         child: IconButton(
-                          icon: Icon(Icons.message, color: Colors.blue, size: 20),
+                          icon: const Icon(Icons.message, color: Colors.blue, size: 20),
                           onPressed: () {
                             Navigator.push(
                               context,
@@ -1857,10 +1957,10 @@ Widget _buildSearchingDriverCard() {
                 ],
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             // Informações do veículo
             Container(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(16),
@@ -1886,17 +1986,17 @@ Widget _buildSearchingDriverCard() {
                 ],
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             // Status da corrida
             Container(
-              padding: EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
+                      const Text(
                         "Motorista a caminho",
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
@@ -1912,7 +2012,7 @@ Widget _buildSearchingDriverCard() {
                       ),
                     ],
                   ),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   // Barra de progresso melhorada
                   ClipRRect(
                     borderRadius: BorderRadius.circular(4),
@@ -1926,7 +2026,7 @@ Widget _buildSearchingDriverCard() {
                 ],
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             // Destino
             Container(
               padding: EdgeInsets.all(16),
@@ -1943,9 +2043,9 @@ Widget _buildSearchingDriverCard() {
                       color: Colors.red.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: Icon(Icons.location_on, color: Colors.red),
+                    child: const Icon(Icons.location_on, color: Colors.red),
                   ),
-                  SizedBox(width: 16),
+                  const SizedBox(width: 16),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1959,7 +2059,7 @@ Widget _buildSearchingDriverCard() {
                         ),
                         Text(
                           _destinationAddress,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 16,
                           ),
@@ -1970,7 +2070,7 @@ Widget _buildSearchingDriverCard() {
                 ],
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             // Botão de emergência melhorado
             OutlinedButton.icon(
               icon: Icon(Icons.emergency, color: Colors.red[700]),
@@ -1987,14 +2087,14 @@ Widget _buildSearchingDriverCard() {
                 _showEmergencyDialog();
               },
               style: OutlinedButton.styleFrom(
-                minimumSize: Size(double.infinity, 50),
+                minimumSize: const Size(double.infinity, 50),
                 side: BorderSide(color: Colors.red[300]!),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () {
                 Navigator.push(
@@ -2010,13 +2110,13 @@ Widget _buildSearchingDriverCard() {
                   ),
                 );
               },
-              child: Text("Efetuar Pagamento"),
               style: ElevatedButton.styleFrom(
                 minimumSize: Size(double.infinity, 50),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
+              child: const Text("Efetuar Pagamento"),
             ),
           ],
         ),
@@ -2039,7 +2139,7 @@ Widget _buildSearchingDriverCard() {
         ),
         Text(
           value,
-          style: TextStyle(
+          style: const TextStyle(
             fontWeight: FontWeight.bold,
             fontSize: 14,
           ),
@@ -2054,7 +2154,7 @@ Widget _buildSearchingDriverCard() {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Row(
+          title: const Row(
             children: [
               Icon(Icons.emergency, color: Colors.red),
               SizedBox(width: 8),
@@ -2066,7 +2166,7 @@ Widget _buildSearchingDriverCard() {
             children: [
               ListTile(
                 leading: Icon(Icons.phone_forwarded, color: Colors.red[700]),
-                title: Text('Ligar para Emergência (190)'),
+                title: const Text('Ligar para Emergência (190)'),
                 onTap: () {
                   Navigator.pop(context);
                   // Implementar ligação para 190
@@ -2075,7 +2175,7 @@ Widget _buildSearchingDriverCard() {
               Divider(),
               ListTile(
                 leading: Icon(Icons.share_location, color: Colors.orange[700]),
-                title: Text('Compartilhar Localização'),
+                title: const Text('Compartilhar Localização'),
                 onTap: () {
                   Navigator.pop(context);
                   // Implementar compartilhamento de localização
@@ -2084,7 +2184,7 @@ Widget _buildSearchingDriverCard() {
               Divider(),
               ListTile(
                 leading: Icon(Icons.cancel, color: Colors.grey[700]),
-                title: Text('Cancelar Corrida'),
+                title: const Text('Cancelar Corrida'),
                 onTap: () {
                   Navigator.pop(context);
                   _cancelRide("Emergência - Corrida cancelada pelo passageiro");
@@ -2094,7 +2194,7 @@ Widget _buildSearchingDriverCard() {
           ),
           actions: [
             TextButton(
-              child: Text('Fechar'),
+              child: const Text('Fechar'),
               onPressed: () {
                 Navigator.of(context).pop();
               },

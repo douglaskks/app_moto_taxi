@@ -6,7 +6,7 @@ abstract class RideState extends Equatable {
   const RideState();
   
   @override
-  List<Object> get props => [];
+  List<Object?> get props => [];
 }
 
 class RideInitial extends RideState {}
@@ -78,7 +78,8 @@ class DriverAccepted extends RideState {
   final LatLng destination;
   final String pickupAddress;
   final String destinationAddress;
-  final LatLng? driverLocation;
+  final LatLng driverLocation;
+  final DateTime lastLocationUpdate;
 
   const DriverAccepted({
     required this.rideId,
@@ -94,16 +95,17 @@ class DriverAccepted extends RideState {
     required this.destination,
     required this.pickupAddress,
     required this.destinationAddress,
-    this.driverLocation,
+    required this.driverLocation,
+    required this.lastLocationUpdate,
   });
 
   @override
-  List<Object> get props => [
+  List<Object?> get props => [
     rideId,
     driverId,
     driverName,
     driverPhone,
-    if (driverPhoto != null) driverPhoto!,
+    driverPhoto,
     driverRating,
     vehicleModel,
     licensePlate,
@@ -112,7 +114,8 @@ class DriverAccepted extends RideState {
     destination,
     pickupAddress,
     destinationAddress,
-    if (driverLocation != null) driverLocation!,
+    driverLocation,
+    lastLocationUpdate,
   ];
 
   DriverAccepted copyWith({
@@ -130,6 +133,7 @@ class DriverAccepted extends RideState {
     String? pickupAddress,
     String? destinationAddress,
     LatLng? driverLocation,
+    DateTime? lastLocationUpdate,
   }) {
     return DriverAccepted(
       rideId: rideId ?? this.rideId,
@@ -146,6 +150,7 @@ class DriverAccepted extends RideState {
       pickupAddress: pickupAddress ?? this.pickupAddress,
       destinationAddress: destinationAddress ?? this.destinationAddress,
       driverLocation: driverLocation ?? this.driverLocation,
+      lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
     );
   }
 }
@@ -159,6 +164,8 @@ class DriverArrived extends RideState {
   final LatLng pickup;
   final LatLng destination;
   final int waitingTime; // Em segundos
+  final LatLng driverLocation;
+  final DateTime lastLocationUpdate;
 
   const DriverArrived({
     required this.rideId,
@@ -169,18 +176,22 @@ class DriverArrived extends RideState {
     required this.pickup,
     required this.destination,
     this.waitingTime = 0,
+    required this.driverLocation,
+    required this.lastLocationUpdate,
   });
 
   @override
-  List<Object> get props => [
+  List<Object?> get props => [
     rideId,
     driverId,
     driverName,
     driverPhone,
-    if (driverPhoto != null) driverPhoto!,
+    driverPhoto,
     pickup,
     destination,
     waitingTime,
+    driverLocation,
+    lastLocationUpdate,
   ];
 
   DriverArrived copyWith({
@@ -192,6 +203,8 @@ class DriverArrived extends RideState {
     LatLng? pickup,
     LatLng? destination,
     int? waitingTime,
+    LatLng? driverLocation,
+    DateTime? lastLocationUpdate,
   }) {
     return DriverArrived(
       rideId: rideId ?? this.rideId,
@@ -202,6 +215,8 @@ class DriverArrived extends RideState {
       pickup: pickup ?? this.pickup,
       destination: destination ?? this.destination,
       waitingTime: waitingTime ?? this.waitingTime,
+      driverLocation: driverLocation ?? this.driverLocation,
+      lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
     );
   }
 }
@@ -212,11 +227,13 @@ class RideInProgress extends RideState {
   final String driverName;
   final LatLng destination;
   final String destinationAddress;
-  final LatLng? currentLocation;
   final double rideProgress; // De 0.0 a 1.0
   final double distanceRemaining; // Em km
   final double timeRemaining; // Em minutos
   final int rideTimeElapsed; // Em segundos
+  final LatLng driverLocation;
+  final LatLng? startLocation;
+  final DateTime lastLocationUpdate;
 
   const RideInProgress({
     required this.rideId,
@@ -224,25 +241,29 @@ class RideInProgress extends RideState {
     required this.driverName,
     required this.destination,
     required this.destinationAddress,
-    this.currentLocation,
-    this.rideProgress = 0.0,
-    this.distanceRemaining = 0.0,
-    this.timeRemaining = 0.0,
+    required this.rideProgress,
+    required this.distanceRemaining,
+    required this.timeRemaining,
     this.rideTimeElapsed = 0,
+    required this.driverLocation,
+    this.startLocation,
+    required this.lastLocationUpdate,
   });
 
   @override
-  List<Object> get props => [
+  List<Object?> get props => [
     rideId,
     driverId,
     driverName,
     destination,
     destinationAddress,
-    if (currentLocation != null) currentLocation!,
     rideProgress,
     distanceRemaining,
     timeRemaining,
     rideTimeElapsed,
+    driverLocation,
+    startLocation,
+    lastLocationUpdate,
   ];
 
   RideInProgress copyWith({
@@ -251,11 +272,13 @@ class RideInProgress extends RideState {
     String? driverName,
     LatLng? destination,
     String? destinationAddress,
-    LatLng? currentLocation,
     double? rideProgress,
     double? distanceRemaining,
     double? timeRemaining,
     int? rideTimeElapsed,
+    LatLng? driverLocation,
+    LatLng? startLocation,
+    DateTime? lastLocationUpdate,
   }) {
     return RideInProgress(
       rideId: rideId ?? this.rideId,
@@ -263,11 +286,13 @@ class RideInProgress extends RideState {
       driverName: driverName ?? this.driverName,
       destination: destination ?? this.destination,
       destinationAddress: destinationAddress ?? this.destinationAddress,
-      currentLocation: currentLocation ?? this.currentLocation,
       rideProgress: rideProgress ?? this.rideProgress,
       distanceRemaining: distanceRemaining ?? this.distanceRemaining,
       timeRemaining: timeRemaining ?? this.timeRemaining,
       rideTimeElapsed: rideTimeElapsed ?? this.rideTimeElapsed,
+      driverLocation: driverLocation ?? this.driverLocation,
+      startLocation: startLocation ?? this.startLocation,
+      lastLocationUpdate: lastLocationUpdate ?? this.lastLocationUpdate,
     );
   }
 }
@@ -296,16 +321,16 @@ class RideCompleted extends RideState {
   });
 
   @override
-  List<Object> get props => [
+  List<Object?> get props => [
     rideId,
     driverId,
     driverName,
-    if (driverPhoto != null) driverPhoto!,
+    driverPhoto,
     finalPrice,
     rideTime,
     distance,
     isRated,
-    if (rating != null) rating!,
+    rating,
   ];
 
   RideCompleted copyWith({
@@ -347,11 +372,11 @@ class RideCancelled extends RideState {
   });
 
   @override
-  List<Object> get props => [
+  List<Object?> get props => [
     rideId,
     reason,
     cancelledBy,
-    if (cancellationFee != null) cancellationFee!,
+    cancellationFee,
   ];
 }
 
@@ -364,3 +389,20 @@ class RideError extends RideState {
   List<Object> get props => [message];
 }
 
+// Novo estado para atualizações de localização do motorista
+class DriverLocationUpdated extends RideState {
+  final String rideId;
+  final String driverId;
+  final LatLng driverLocation;
+  final DateTime timestamp;
+  
+  DriverLocationUpdated({
+    required this.rideId,
+    required this.driverId,
+    required this.driverLocation,
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
+  
+  @override
+  List<Object> get props => [rideId, driverId, driverLocation, timestamp];
+}

@@ -6,7 +6,7 @@ abstract class RideEvent extends Equatable {
   const RideEvent();
 
   @override
-  List<Object> get props => [];
+  List<Object?> get props => [];
 }
 
 class RequestRide extends RideEvent {
@@ -98,20 +98,16 @@ class StopTrackingRide extends RideEvent {}
 class RateRide extends RideEvent {
   final String rideId;
   final double rating;
-  final String? comment;
+  final String comment;
 
   const RateRide({
     required this.rideId,
     required this.rating,
-    this.comment,
+    required this.comment,
   });
 
   @override
-  List<Object> get props => [
-    rideId, 
-    rating,
-    if (comment != null) comment!,
-  ];
+  List<Object> get props => [rideId, rating, comment];
 }
 
 class RideUpdated extends RideEvent {
@@ -123,3 +119,31 @@ class RideUpdated extends RideEvent {
   List<Object> get props => [rideData];
 }
 
+// NOVOS EVENTOS
+
+// Evento para iniciar rastreamento da localização do motorista
+class StartDriverTracking extends RideEvent {
+  final String driverId;
+  
+  const StartDriverTracking({required this.driverId});
+  
+  @override
+  List<Object> get props => [driverId];
+}
+
+// Evento para parar rastreamento da localização do motorista
+class StopDriverTracking extends RideEvent {}
+
+// Evento para atualizar a localização do motorista
+class UpdateDriverLocation extends RideEvent {
+  final String driverId;
+  final LatLng location;
+  
+  const UpdateDriverLocation({
+    required this.driverId,
+    required this.location,
+  });
+  
+  @override
+  List<Object> get props => [driverId, location];
+}

@@ -1,6 +1,8 @@
 // Arquivo: lib/controllers/bloc/ride/ride_bloc.dart
 
 import 'dart:async';
+import 'dart:math';
+import 'package:app_moto_taxe/core/services/user_statistics_service.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../../core/services/realtime_database_service.dart';
@@ -9,13 +11,16 @@ import 'ride_state.dart';
 
 class RideBloc extends Bloc<RideEvent, RideState> {
   final RealtimeDatabaseService _databaseService;
+  final UserStatisticsService _statisticsService = UserStatisticsService();
   
   StreamSubscription? _rideSubscription;
+  StreamSubscription? _driverLocationSubscription;
   Timer? _searchTimer;
   Timer? _rideTimer;
   Timer? _waitingTimer;
   
   String? _currentRideId;
+  String? _currentDriverId;
   int _searchTimeElapsed = 0;
   int _rideTimeElapsed = 0;
   int _waitingTimeElapsed = 0;
@@ -28,6 +33,11 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     on<TrackRide>(_onTrackRide);
     on<StopTrackingRide>(_onStopTrackingRide);
     on<RateRide>(_onRateRide);
+    
+    // Registrar os novos eventos
+    on<StartDriverTracking>(_onStartDriverTracking);
+    on<StopDriverTracking>(_onStopDriverTracking);
+    on<UpdateDriverLocation>(_onUpdateDriverLocation);
     
     // Registrar o método usando a sintaxe correta para métodos assíncronos
     on<RideUpdated>((event, emit) async {
@@ -158,6 +168,106 @@ class RideBloc extends Bloc<RideEvent, RideState> {
     }
   }
   
+  void _onStartDriverTracking(StartDriverTracking event, Emitter<RideState> emit) {
+    // Use logger em vez de print no futuro
+    print("RideBloc: Iniciando rastreamento do motorista ${event.driverId}");
+    
+    _currentDriverId = event.driverId;
+    
+    // Cancelar assinatura anterior se existir
+    _driverLocationSubscription?.cancel();
+    
+    // Iniciar nova assinatura para atualizações de localização
+    _driverLocationSubscription = _databaseService
+    .getDriverLocationStream(event.driverId)
+    .listen(
+      (locationData) {
+        if (locationData != null) {
+          // Verificar se o mapa contém os dados necessários
+          if (locationData.containsKey('latitude') && 
+              locationData.containsKey('longitude')) {
+            
+            // Extrair latitude e longitude do mapa
+            double lat = locationData['latitude'];
+            double lng = locationData['longitude'];
+            
+            // Criar um novo objeto LatLng com esses valores
+            add(UpdateDriverLocation(
+              driverId: event.driverId,
+              location: LatLng(lat, lng),
+            ));
+          }
+        }
+      },
+      onError: (error) {
+        print("RideBloc: Erro ao monitorar localização do motorista: $error");
+      }
+    );
+  }
+  
+  void _onStopDriverTracking(StopDriverTracking event, Emitter<RideState> emit) {
+    print("RideBloc: Parando rastreamento do motorista");
+    _driverLocationSubscription?.cancel();
+    _driverLocationSubscription = null;
+    _currentDriverId = null;
+  }
+  
+  void _onUpdateDriverLocation(UpdateDriverLocation event, Emitter<RideState> emit) {
+    print("RideBloc: Atualizando localização do motorista ${event.driverId}");
+    
+    // Verificar o estado atual e atualizar com a nova localização
+    if (state is DriverAccepted && !emit.isDone) {
+      final currentState = state as DriverAccepted;
+      
+      emit(currentState.copyWith(
+        driverLocation: event.location,
+        lastLocationUpdate: DateTime.now(),
+      ));
+    } 
+    else if (state is DriverArrived && !emit.isDone) {
+      final currentState = state as DriverArrived;
+      
+      emit(currentState.copyWith(
+        driverLocation: event.location,
+        lastLocationUpdate: DateTime.now(),
+      ));
+    }
+    else if (state is RideInProgress && !emit.isDone) {
+      final currentState = state as RideInProgress;
+      
+      // Calcular distância restante até o destino
+      double distanceRemaining = _calculateDistance(
+        event.location.latitude, 
+        event.location.longitude,
+        currentState.destination.latitude,
+        currentState.destination.longitude,
+      );
+      
+      // Estimar tempo restante com velocidade média de 30 km/h
+      double timeRemaining = (distanceRemaining / 30) * 60; // em minutos
+      
+      // Calcular progresso da viagem
+      double totalDistance = _calculateDistance(
+        currentState.startLocation?.latitude ?? event.location.latitude,
+        currentState.startLocation?.longitude ?? event.location.longitude,
+        currentState.destination.latitude,
+        currentState.destination.longitude,
+      );
+      
+      double progress = totalDistance > 0 ? 
+        (totalDistance - distanceRemaining) / totalDistance : 0.0;
+      progress = progress.clamp(0.0, 1.0); // garantir que fique entre 0 e 1
+      
+      emit(currentState.copyWith(
+        driverLocation: event.location,
+        distanceRemaining: distanceRemaining,
+        timeRemaining: timeRemaining,
+        rideProgress: progress,
+        lastLocationUpdate: DateTime.now(),
+      ));
+    }
+  }
+  
   void _onTrackRide(TrackRide event, Emitter<RideState> emit) {
     print("RideBloc: Iniciando monitoramento da corrida ${event.rideId}...");
     
@@ -253,6 +363,9 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         print("RideBloc: Buscando dados do motorista");
         final driverId = rideData['driver_id'];
         
+        // Iniciar rastreamento da localização do motorista
+        add(StartDriverTracking(driverId: driverId));
+        
         try {
           // Buscar dados reais do motorista do banco de dados
           final driverData = await _databaseService.getDriverData(driverId);
@@ -260,12 +373,32 @@ class RideBloc extends Bloc<RideEvent, RideState> {
           if (driverData != null && !emit.isDone) {
             print("RideBloc: Dados do motorista obtidos com sucesso: ${driverData['name']}");
             
+            // Verificar se há dados de localização do motorista
+            LatLng driverLocation;
+            if (driverData.containsKey('current_location') && 
+                driverData['current_location'] != null &&
+                driverData['current_location'].containsKey('latitude') &&
+                driverData['current_location'].containsKey('longitude')) {
+              
+              driverLocation = LatLng(
+                driverData['current_location']['latitude'],
+                driverData['current_location']['longitude'],
+              );
+            } else {
+              // Fallback: usar a localização de pickup como aproximação inicial
+              driverLocation = LatLng(
+                rideData['pickup']['latitude'],
+                rideData['pickup']['longitude'],
+              );
+            }
+            
             // Emitir estado com os dados reais do motorista
             emit(DriverAccepted(
               rideId: rideId,
               driverId: driverId,
               driverName: driverData['name'] ?? "Motorista",
               driverPhone: driverData['phone'] ?? "",
+              driverPhoto: driverData['photo'],
               driverRating: driverData['rating'] ?? 0.0,
               vehicleModel: driverData['vehicle']?['model'] ?? "Veículo",
               licensePlate: driverData['vehicle']?['plate'] ?? "",
@@ -280,6 +413,8 @@ class RideBloc extends Bloc<RideEvent, RideState> {
               ),
               pickupAddress: rideData['pickup']['address'],
               destinationAddress: rideData['destination']['address'],
+              driverLocation: driverLocation,
+              lastLocationUpdate: DateTime.now(),
             ));
           } else if (!emit.isDone) {
             print("RideBloc: Dados do motorista não encontrados, usando fallback");
@@ -317,11 +452,23 @@ class RideBloc extends Bloc<RideEvent, RideState> {
           if (driverData != null && !emit.isDone) {
             print("RideBloc: Dados do motorista obtidos para chegada: ${driverData['name']}");
             
+            // Obter localização atual do motorista (que deve ser no ponto de pickup)
+            LatLng driverLocation;
+            if (state is DriverAccepted) {
+              driverLocation = (state as DriverAccepted).driverLocation;
+            } else {
+              driverLocation = LatLng(
+                rideData['pickup']['latitude'],
+                rideData['pickup']['longitude'],
+              );
+            }
+            
             emit(DriverArrived(
               rideId: rideId,
               driverId: driverId,
               driverName: driverData['name'] ?? "Motorista",
               driverPhone: driverData['phone'] ?? "",
+              driverPhoto: driverData['photo'],
               pickup: LatLng(
                 rideData['pickup']['latitude'],
                 rideData['pickup']['longitude'],
@@ -330,6 +477,8 @@ class RideBloc extends Bloc<RideEvent, RideState> {
                 rideData['destination']['latitude'],
                 rideData['destination']['longitude'],
               ),
+              driverLocation: driverLocation,
+              lastLocationUpdate: DateTime.now(),
             ));
           } else if (!emit.isDone) {
             print("RideBloc: Dados do motorista não encontrados para chegada");
@@ -346,6 +495,11 @@ class RideBloc extends Bloc<RideEvent, RideState> {
                 rideData['destination']['latitude'],
                 rideData['destination']['longitude'],
               ),
+              driverLocation: LatLng(
+                rideData['pickup']['latitude'],
+                rideData['pickup']['longitude'],
+              ),
+              lastLocationUpdate: DateTime.now(),
             ));
           }
         } catch (e) {
@@ -364,6 +518,11 @@ class RideBloc extends Bloc<RideEvent, RideState> {
                 rideData['destination']['latitude'],
                 rideData['destination']['longitude'],
               ),
+              driverLocation: LatLng(
+                rideData['pickup']['latitude'],
+                rideData['pickup']['longitude'],
+              ),
+              lastLocationUpdate: DateTime.now(),
             ));
           }
         }
@@ -395,6 +554,49 @@ class RideBloc extends Bloc<RideEvent, RideState> {
           // Buscar dados reais do motorista do banco de dados
           final driverData = await _databaseService.getDriverData(driverId);
           
+          // Obter localização atual do motorista
+          LatLng driverLocation;
+          if (state is DriverArrived) {
+            driverLocation = (state as DriverArrived).driverLocation;
+          } else if (state is DriverAccepted) {
+            driverLocation = (state as DriverAccepted).driverLocation;
+          } else {
+            driverLocation = LatLng(
+              rideData['pickup']['latitude'],
+              rideData['pickup']['longitude'],
+            );
+          }
+          
+          // Calcular distância restante e tempo estimado
+          double distanceRemaining = _calculateDistance(
+            driverLocation.latitude, 
+            driverLocation.longitude,
+            rideData['destination']['latitude'],
+            rideData['destination']['longitude'],
+          );
+          
+          // Estimar o tempo restante (assumindo 30 km/h velocidade média)
+          double timeRemaining = (distanceRemaining / 30) * 60; // em minutos
+          
+          // Ponto de partida para calcular o progresso
+          LatLng startLocation = LatLng(
+            rideData['pickup']['latitude'],
+            rideData['pickup']['longitude'],
+          );
+          
+          // Calcular distância total da viagem
+          double totalDistance = _calculateDistance(
+            startLocation.latitude,
+            startLocation.longitude,
+            rideData['destination']['latitude'],
+            rideData['destination']['longitude'],
+          );
+          
+          // Calcular progresso aproximado da viagem
+          double distanceTraveled = totalDistance - distanceRemaining;
+          double progress = distanceTraveled / totalDistance;
+          progress = progress.clamp(0.0, 1.0); // Garantir que fique entre 0 e 1
+          
           if (driverData != null && !emit.isDone) {
             print("RideBloc: Dados do motorista obtidos para viagem: ${driverData['name']}");
             
@@ -407,10 +609,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
                 rideData['destination']['longitude'],
               ),
               destinationAddress: rideData['destination']['address'],
-              rideProgress: 0.3, // Melhorar esse cálculo no futuro
-              distanceRemaining: 2.5, // Melhorar esse cálculo no futuro
-              timeRemaining: 8.0, // Melhorar esse cálculo no futuro
+              rideProgress: progress,
+              distanceRemaining: distanceRemaining,
+              timeRemaining: timeRemaining,
               rideTimeElapsed: _rideTimeElapsed,
+              driverLocation: driverLocation,
+              startLocation: startLocation,
+              lastLocationUpdate: DateTime.now(),
             ));
           } else if (!emit.isDone) {
             print("RideBloc: Dados do motorista não encontrados para viagem");
@@ -423,10 +628,13 @@ class RideBloc extends Bloc<RideEvent, RideState> {
                 rideData['destination']['longitude'],
               ),
               destinationAddress: rideData['destination']['address'],
-              rideProgress: 0.3,
-              distanceRemaining: 2.5,
-              timeRemaining: 8.0,
+              rideProgress: progress,
+              distanceRemaining: distanceRemaining,
+              timeRemaining: timeRemaining,
               rideTimeElapsed: _rideTimeElapsed,
+              driverLocation: driverLocation,
+              startLocation: startLocation,
+              lastLocationUpdate: DateTime.now(),
             ));
           }
         } catch (e) {
@@ -445,6 +653,15 @@ class RideBloc extends Bloc<RideEvent, RideState> {
               distanceRemaining: 2.5,
               timeRemaining: 8.0,
               rideTimeElapsed: _rideTimeElapsed,
+              driverLocation: LatLng(
+                rideData['pickup']['latitude'],
+                rideData['pickup']['longitude'],
+              ),
+              startLocation: LatLng(
+                rideData['pickup']['latitude'],
+                rideData['pickup']['longitude'],
+              ),
+              lastLocationUpdate: DateTime.now(),
             ));
           }
         }
@@ -452,10 +669,26 @@ class RideBloc extends Bloc<RideEvent, RideState> {
         
       case 'completed':
         _rideTimer?.cancel();
+        // Parar o rastreamento do motorista quando a corrida for concluída
+        add(StopDriverTracking());
         
         print("RideBloc: Buscando dados do motorista para corrida finalizada");
         final driverId = rideData['driver_id'];
         double finalPrice = rideData['final_price'] ?? rideData['estimated_price'];
+        double distance = rideData['estimated_distance'];
+        
+        // Atualizar estatísticas do usuário
+        try {
+          await _statisticsService.updateUserStatisticsAfterRide(
+            rideDistance: distance,
+            ridePrice: finalPrice,
+            rideId: rideId,
+          );
+          print("RideBloc: Estatísticas do usuário atualizadas com sucesso");
+        } catch (e) {
+          print("RideBloc: Erro ao atualizar estatísticas do usuário: $e");
+          // Não interromper o fluxo da corrida se as estatísticas falharem
+        }
         
         try {
           // Buscar dados reais do motorista do banco de dados
@@ -468,9 +701,10 @@ class RideBloc extends Bloc<RideEvent, RideState> {
               rideId: rideId,
               driverId: driverId,
               driverName: driverData['name'] ?? "Motorista",
+              driverPhoto: driverData['photo'],
               finalPrice: finalPrice,
               rideTime: _rideTimeElapsed,
-              distance: rideData['estimated_distance'],
+              distance: distance,
               isRated: false,
             ));
           } else if (!emit.isDone) {
@@ -481,7 +715,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
               driverName: "Motorista",
               finalPrice: finalPrice,
               rideTime: _rideTimeElapsed,
-              distance: rideData['estimated_distance'],
+              distance: distance,
               isRated: false,
             ));
           }
@@ -494,7 +728,7 @@ class RideBloc extends Bloc<RideEvent, RideState> {
               driverName: "Motorista",
               finalPrice: finalPrice,
               rideTime: _rideTimeElapsed,
-              distance: rideData['estimated_distance'],
+              distance: distance,
               isRated: false,
             ));
           }
@@ -520,6 +754,12 @@ class RideBloc extends Bloc<RideEvent, RideState> {
   void _emitFallbackDriverAccepted(Emitter<RideState> emit, String rideId, String driverId, Map<String, dynamic> rideData) {
     if (emit.isDone) return;
     
+    // Criar localização padrão do motorista (próximo ao ponto de embarque)
+    LatLng driverLocation = LatLng(
+      rideData['pickup']['latitude'],
+      rideData['pickup']['longitude'],
+    );
+    
     emit(DriverAccepted(
       rideId: rideId,
       driverId: driverId,
@@ -539,22 +779,51 @@ class RideBloc extends Bloc<RideEvent, RideState> {
       ),
       pickupAddress: rideData['pickup']['address'],
       destinationAddress: rideData['destination']['address'],
+      driverLocation: driverLocation,
+      lastLocationUpdate: DateTime.now(),
     ));
   }
   
   void _cleanupRideResources() {
-    print("RideBloc: Limpando recursos...");
-    _searchTimer?.cancel();
-    _rideTimer?.cancel();
-    _waitingTimer?.cancel();
-    _rideSubscription?.cancel();
+  print("RideBloc: Limpando recursos da corrida $_currentRideId e motorista $_currentDriverId...");
+  _searchTimer?.cancel();
+  _rideTimer?.cancel();
+  _waitingTimer?.cancel();
+  _rideSubscription?.cancel();
+  _driverLocationSubscription?.cancel();
+  
+  _searchTimer = null;
+  _rideTimer = null;
+  _waitingTimer = null;
+  _rideSubscription = null;
+  _driverLocationSubscription = null;
+  
+  _currentRideId = null;
+  _currentDriverId = null;
+}
+  
+  // Método auxiliar para calcular distância entre dois pontos
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    // Raio da Terra em km
+    const double earthRadius = 6371;
     
-    _searchTimer = null;
-    _rideTimer = null;
-    _waitingTimer = null;
-    _rideSubscription = null;
+    // Converter graus para radianos
+    double dLat = _degreesToRadians(lat2 - lat1);
+    double dLon = _degreesToRadians(lon2 - lon1);
     
-    _currentRideId = null;
+    // Fórmula de Haversine
+    double a = sin(dLat/2) * sin(dLat/2) +
+              cos(_degreesToRadians(lat1)) * cos(_degreesToRadians(lat2)) *
+              sin(dLon/2) * sin(dLon/2);
+    double c = 2 * atan2(sqrt(a), sqrt(1-a));
+    double distance = earthRadius * c;
+    
+    return distance;
+  }
+  
+  // Converter graus para radianos
+  double _degreesToRadians(double degrees) {
+    return degrees * (pi / 180);
   }
   
   @override

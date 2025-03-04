@@ -98,11 +98,17 @@ class DriverLocationBloc extends Bloc<DriverLocationEvent, DriverLocationState> 
     _driverLocationSubscription = _databaseService
       .getDriverLocationStream(event.driverId)
       .listen(
-        (LatLng? location) {
-          if (location != null) {
+        (locationData) {
+          if (locationData != null && 
+              locationData.containsKey('latitude') && 
+              locationData.containsKey('longitude')) {
+            
+            double lat = locationData['latitude'];
+            double lng = locationData['longitude'];
+            
             add(UpdateDriverLocation(
               driverId: event.driverId,
-              location: location,
+              location: LatLng(lat, lng),
             ));
           }
         },
@@ -144,19 +150,25 @@ class DriverLocationBloc extends Bloc<DriverLocationEvent, DriverLocationState> 
       
       // Se ainda não estiver assinando atualizações para este motorista, iniciar
       if (!_driverSubscriptions.containsKey(driverId)) {
-        _driverSubscriptions[driverId] = _databaseService
-          .getDriverLocationStream(driverId)
-          .listen(
-            (LatLng? location) {
-              if (location != null) {
-                add(UpdateDriverLocation(
-                  driverId: driverId,
-                  location: location,
-                ));
-              }
+      _driverSubscriptions[driverId] = _databaseService
+        .getDriverLocationStream(driverId)
+        .listen(
+          (locationData) {
+            if (locationData != null && 
+                locationData.containsKey('latitude') && 
+                locationData.containsKey('longitude')) {
+              
+              double lat = locationData['latitude'];
+              double lng = locationData['longitude'];
+              
+              add(UpdateDriverLocation(
+                driverId: driverId,
+                location: LatLng(lat, lng),
+              ));
             }
-          );
-      }
+          }
+        );
+    }
     }
   }
   

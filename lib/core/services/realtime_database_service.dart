@@ -476,7 +476,7 @@ class RealtimeDatabaseService {
   }
   
   // Obter localização em tempo real do motorista
-  Stream<LatLng?> getDriverLocationStream(String driverId) {
+  Stream<Map<String, dynamic>?> getDriverLocationStream(String driverId) {
     print("RealtimeDatabaseService: Iniciando stream de localização do motorista $driverId");
     
     return _driversLocationRef.child(driverId).onValue.map((event) {
@@ -485,14 +485,17 @@ class RealtimeDatabaseService {
         return null;
       }
       
-      Map<String, dynamic> locationData = 
-          Map<String, dynamic>.from(event.snapshot.value as Map);
-      
-      print("RealtimeDatabaseService: Localização do motorista $driverId atualizada: (${locationData['latitude']}, ${locationData['longitude']})");
-      return LatLng(
-        locationData['latitude'] as double,
-        locationData['longitude'] as double,
-      );
+      try {
+        // Retornar o mapa diretamente
+        Map<String, dynamic> locationData = 
+            Map<String, dynamic>.from(event.snapshot.value as Map);
+        
+        print("RealtimeDatabaseService: Localização do motorista $driverId atualizada: (${locationData['latitude']}, ${locationData['longitude']})");
+        return locationData;
+      } catch (e) {
+        print("RealtimeDatabaseService: Erro ao processar dados de localização - $e");
+        return null;
+      }
     });
   }
   
@@ -592,6 +595,8 @@ class RealtimeDatabaseService {
       return null;
     }
   }
+
+  
   
   // Limpar recursos ao encerrar
   void dispose() {
@@ -601,3 +606,28 @@ class RealtimeDatabaseService {
   }
 }
 
+// Método para obter atualizações da localização do motorista
+Stream<Map<String, dynamic>?> getDriverLocationStream(String driverId) {
+  print("RealtimeDatabaseService: Iniciando stream de localização do motorista $driverId");
+  
+  // Usar FirebaseDatabase.instance diretamente se _database não estiver definido
+  final driversLocationRef = FirebaseDatabase.instance.ref().child('drivers_locations');
+  
+  return driversLocationRef.child(driverId).onValue.map((event) {
+    if (event.snapshot.value == null) {
+      print("RealtimeDatabaseService: Localização do motorista $driverId não encontrada");
+      return null;
+    }
+    
+    try {
+      Map<String, dynamic> locationData = 
+          Map<String, dynamic>.from(event.snapshot.value as Map);
+      
+      print("RealtimeDatabaseService: Localização do motorista $driverId atualizada: (${locationData['latitude']}, ${locationData['longitude']})");
+      return locationData;
+    } catch (e) {
+      print("RealtimeDatabaseService: Erro ao processar dados de localização - $e");
+      return null;
+    }
+  });
+}

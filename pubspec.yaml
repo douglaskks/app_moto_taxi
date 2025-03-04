@@ -58,6 +58,8 @@ dependencies:
   webview_flutter: ^4.2.2
   flutter_google_maps_webservices: ^1.1.1
   shared_preferences: ^2.5.2
+  cached_network_image: ^3.4.1
+  mask_text_input_formatter: ^2.9.0
 
 dev_dependencies:
   flutter_test:
@@ -79,6 +81,7 @@ flutter:
   assets:
     - lib/assets/images/logo.png
     - lib/assets/images/promocao.png
+    - lib/assets/images/motorcycle_marker.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
